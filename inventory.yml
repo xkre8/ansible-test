@@ -1,0 +1,7 @@
+all:
+  hosts:
+    server1:
+      ansible_host: 4.193.195.144
+      ansible_user: azureuser
+  vars:
+    ansible_ssh_private_key_file: ./my-app-key.pem

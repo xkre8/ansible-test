@@ -1,0 +1,66 @@
+- name: Install LVM packages
+  package:
+    name:
+      - lvm2
+      - nfs-kernel-server
+      - nfs-common
+    state: present
+
+- name: Create Physical Volume
+  lvg:
+    vg: "{{ lvm_vg_name }}"
+    pvs: "{{ lvm_disk }}"
+    state: present
+
+- name: Create Logical Volume
+  lvol:
+    vg: "{{ lvm_vg_name }}"
+    lv: "{{ lvm_lv_name }}"
+    size: "{{ lvm_size }}"
+    state: present
+
+- name: Format Logical Volume
+  filesystem:
+    fstype: "{{ lvm_filesystem }}"
+    dev: "/dev/{{ lvm_vg_name }}/{{ lvm_lv_name }}"
+    state: present
+
+- name: Create mount point
+  file:
+    path: "{{ lvm_mount_point }}"
+    state: directory
+    mode: '0755'
+
+- name: Mount Logical Volume
+  mount:
+    path: "{{ lvm_mount_point }}"
+    src: "/dev/{{ lvm_vg_name }}/{{ lvm_lv_name }}"
+    fstype: "{{ lvm_filesystem }}"
+    state: mounted
+
+- name: Set permissions for share
+  file:
+    path: "{{ lvm_mount_point }}"
+    owner: "{{ share_owner | default('root') }}"
+    group: "{{ share_group | default('root') }}"
+    mode: "{{ share_mode | default('0755') }}"
+    state: directory
+
+- name: Configure NFS exports
+  lineinfile:
+    path: /etc/exports
+    line: "{{ lvm_mount_point }} {{ nfs_clients }}({{ nfs_options }})"
+    create: yes
+  notify: restart nfs
+
+- name: Start and enable NFS services
+  service:
+    name: "{{ item }}"
+    state: started
+    enabled: yes
+  loop:
+    - nfs-kernel-server
+    - rpcbind
+
+- name: Export NFS shares
+  command: exportfs -ra

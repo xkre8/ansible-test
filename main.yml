@@ -7,7 +7,7 @@
     
   vars:
     # Java Variables
-    java_version: "11"  # 8, 11, 17, 21
+    java_version: "17"  # 8, 11, 17, 21
     java_home: "/opt/java"
     java_urls:
       "8": "https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u392-b08/OpenJDK8U-jdk_x64_linux_hotspot_8u392b08.tar.gz"
@@ -15,8 +15,38 @@
       "17": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.9+9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.9_9.tar.gz"
       "21": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.1+12/OpenJDK21U-jdk_x64_linux_hotspot_21.0.1_12.tar.gz"
     
+
+    username: "appuser"
+    user_group: "appgroup"
+    user_password: "mypassword123"  
+    user_sudo: true  
+
+
+# LVM Variables
+    lvm_disk: "/dev/sdb1"              # disk ที่จะใช้สำหรับ LVM
+    lvm_vg_name: "data_vg"            # Volume Group name
+    lvm_lv_name: "share_lv"           # Logical Volume name
+    lvm_size: "500M"                   # ขนาด LV (เช่น 10G, 500M, 100%FREE)
+    lvm_filesystem: "ext4"            # filesystem type
+    lvm_mount_point: "/data/share"    # mount point
+    
+    # File Share Variables
+    share_owner: "{{ username }}"    
+    share_group: "{{ user_group }}"  
+    share_mode: "0755"                
+    
+    # NFS Variables
+    nfs_clients: "*"                  
+    nfs_options: "rw,sync,no_subtree_check,no_root_squash"  
+
   tasks:
       
     # Java Installation Tasks
     - name: Install Java
       ansible.builtin.include_tasks: java_install.yml
+
+    - name: Create User
+      include_tasks: user_create.yml
+
+    - name: Setup LVM File Share
+      include_tasks: lvm_create.yml
