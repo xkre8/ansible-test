@@ -23,12 +23,12 @@
 
 
 # LVM Variables
-    lvm_disk: "/dev/sdb1"              # disk ที่จะใช้สำหรับ LVM
-    lvm_vg_name: "data_vg"            # Volume Group name
-    lvm_lv_name: "share_lv"           # Logical Volume name
-    lvm_size: "500M"                   # ขนาด LV (เช่น 10G, 500M, 100%FREE)
-    lvm_filesystem: "ext4"            # filesystem type
-    lvm_mount_point: "/data/share"    # mount point
+    lvm_disk: "/dev/sdb1"            
+    lvm_vg_name: "data_vg"            
+    lvm_lv_name: "share_lv"           
+    lvm_size: "500M"                 
+    lvm_filesystem: "ext4"            
+    lvm_mount_point: "/data/share"   
     
     # File Share Variables
     share_owner: "{{ username }}"    
