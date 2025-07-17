@@ -1,3 +1,5 @@
+---
+# filesystem_create.yml - Tasks สำหรับสร้าง Filesystem
 - name: Create filesystem directories
   file:
     path: "{{ item.path }}"
@@ -35,11 +37,3 @@
     recurse: yes
   loop: "{{ filesystem_dirs }}"
   when: item.create_disk | default(false)
-
-- name: Configure NFS exports
-  lineinfile:
-    path: /etc/exports
-    line: "{{ item.path }} *(rw,sync,no_subtree_check)"
-    create: yes
-  loop: "{{ filesystem_dirs }}"
-  notify: restart nfs
