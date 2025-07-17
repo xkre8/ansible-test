@@ -18,9 +18,9 @@
     password: "{{ user_password | password_hash('sha512') }}"
   when: user_password is defined
 
-- name: Add user to sudo group
+- name: Add user to wheel group
   user:
     name: "{{ username }}"
-    groups: sudo
+    groups: wheel
     append: yes
   when: user_sudo | default(false)

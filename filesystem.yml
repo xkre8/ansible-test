@@ -1,0 +1,45 @@
+- name: Create filesystem directories
+  file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop: "{{ filesystem_dirs }}"
+
+- name: Create disk image files for filesystem
+  shell: |
+    if [ ! -f {{ item.path }}.img ]; then
+      dd if=/dev/zero of={{ item.path }}.img bs=1M count={{ item.size_mb }}
+      mkfs.ext4 {{ item.path }}.img
+    fi
+  loop: "{{ filesystem_dirs }}"
+  when: item.create_disk | default(false)
+
+- name: Mount filesystem directories
+  mount:
+    path: "{{ item.path }}"
+    src: "{{ item.path }}.img"
+    fstype: ext4
+    opts: loop
+    state: mounted
+  loop: "{{ filesystem_dirs }}"
+  when: item.create_disk | default(false)
+
+- name: Set ownership after mount
+  file:
+    path: "{{ item.path }}"
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0755') }}"
+    recurse: yes
+  loop: "{{ filesystem_dirs }}"
+  when: item.create_disk | default(false)
+
+- name: Configure NFS exports
+  lineinfile:
+    path: /etc/exports
+    line: "{{ item.path }} *(rw,sync,no_subtree_check)"
+    create: yes
+  loop: "{{ filesystem_dirs }}"
+  notify: restart nfs
