@@ -22,50 +22,21 @@
 
 
 # LVM Variables
-
-    filesystem_dirs:
-      - path: "/opt/REDHAT"
-        owner: "root"
-        group: "root"
-        mode: "0755"
-        create_disk: true
-        size_mb: 100  # 1GB
-      - path: "/data/tomcat_logs"
-        owner: "{{ username }}"
-        group: "{{ user_group }}"
-        mode: "0755"
-        create_disk: true
-        size_mb: 100  # 2GB
-      - path: "/data/tomcat_archive"
-        owner: "{{ username }}"
-        group: "{{ user_group }}"
-        mode: "0755"
-        create_disk: true
-        size_mb: 100  # 5GB
-      - path: "/jdump"
-        owner: "{{ username }}"
-        group: "{{ user_group }}"
-        mode: "0755"
-        create_disk: true
-        size_mb: 100   # 512MB
-      - path: "/scripts"
-        owner: "{{ username }}"
-        group: "{{ user_group }}"
-        mode: "0755"
-        size_mb: 100
-        create_disk: true  # ไม่สร้าง disk image, ใช้ directory ธรรมดา
-      - path: "/mdw_app_deploy"
-        owner: "{{ username }}"
-        group: "{{ user_group }}"
-        mode: "0755"
-        create_disk: true
-        size_mb: 100  # 3GB
-
-    handlers:
-      - name: restart nfs
-        systemd:
-          name: "{{ 'nfs-kernel-server' if ansible_facts['os_family'] == 'Debian' else 'nfs-server' }}"
-          state: restarted
+    lvm_disk: "/dev/sdb1"              # disk ที่จะใช้สำหรับ LVM
+    lvm_vg_name: "data_vg"            # Volume Group name
+    lvm_lv_name: "share_lv"           # Logical Volume name
+    lvm_size: "500M"                   # ขนาด LV (เช่น 10G, 500M, 100%FREE)
+    lvm_filesystem: "ext4"            # filesystem type
+    lvm_mount_point: "/data/share"    # mount point
+    
+    # File Share Variables
+    share_owner: "{{ username }}"    
+    share_group: "{{ user_group }}"  
+    share_mode: "0755"                
+    
+    # NFS Variables
+    nfs_clients: "*"                  
+    nfs_options: "rw,sync,no_subtree_check,no_root_squash"  
 
   tasks:
       
@@ -76,9 +47,5 @@
     - name: Create User
       include_tasks: user_create.yml
 
-    - name: Setup File Share
-      include_tasks: filesystem.yml
-
-    # - name: Setup LVM File Share
-    #   include_tasks: lvm_create.yml
-
+    - name: Setup LVM File Share
+      include_tasks: lvm_create.yml
