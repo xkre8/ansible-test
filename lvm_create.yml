@@ -1,66 +1,62 @@
-- name: Install LVM packages
-  package:
-    name:
-      - lvm2
-      - nfs-kernel-server
-      - nfs-common
-    state: present
+---
+# filesystem_redhat.yml - Red Hat Filesystem Tasks Only
+    # --- Filesystem Setup ---
+    - name: Create filesystem directories
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+        mode: "{{ item.mode | default('0755') }}"
+      loop: "{{ filesystem_dirs }}"
 
-- name: Create Physical Volume
-  lvg:
-    vg: "{{ lvm_vg_name }}"
-    pvs: "{{ lvm_disk }}"
-    state: present
+    - name: Create disk image files for filesystem
+      shell: |
+        if [ ! -f {{ item.path }}.img ]; then
+          dd if=/dev/zero of={{ item.path }}.img bs=1M count={{ item.size_mb }}
+          mkfs.ext4 -F {{ item.path }}.img
+        fi
+      loop: "{{ filesystem_dirs }}"
+      when: item.create_disk | default(false)
 
-- name: Create Logical Volume
-  lvol:
-    vg: "{{ lvm_vg_name }}"
-    lv: "{{ lvm_lv_name }}"
-    size: "{{ lvm_size }}"
-    state: present
+    - name: Mount filesystem directories
+      mount:
+        path: "{{ item.path }}"
+        src: "{{ item.path }}.img"
+        fstype: ext4
+        opts: loop
+        state: mounted
+      loop: "{{ filesystem_dirs }}"
+      when: item.create_disk | default(false)
 
-- name: Format Logical Volume
-  filesystem:
-    fstype: "{{ lvm_filesystem }}"
-    dev: "/dev/{{ lvm_vg_name }}/{{ lvm_lv_name }}"
-    state: present
+    - name: Add to /etc/fstab for persistent mount
+      mount:
+        path: "{{ item.path }}"
+        src: "{{ item.path }}.img"
+        fstype: ext4
+        opts: loop
+        state: present
+      loop: "{{ filesystem_dirs }}"
+      when: item.create_disk | default(false)
 
-- name: Create mount point
-  file:
-    path: "{{ lvm_mount_point }}"
-    state: directory
-    mode: '0755'
+    - name: Set ownership after mount
+      file:
+        path: "{{ item.path }}"
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+        mode: "{{ item.mode | default('0755') }}"
+        recurse: yes
+      loop: "{{ filesystem_dirs }}"
+      when: item.create_disk | default(false)
 
-- name: Mount Logical Volume
-  mount:
-    path: "{{ lvm_mount_point }}"
-    src: "/dev/{{ lvm_vg_name }}/{{ lvm_lv_name }}"
-    fstype: "{{ lvm_filesystem }}"
-    state: mounted
+    - name: Verify filesystem mount point
+      command: "df -h {{ item.path }}"
+      register: mount_check
+      loop: "{{ filesystem_dirs }}"
+      when: item.create_disk | default(false)
 
-- name: Set permissions for share
-  file:
-    path: "{{ lvm_mount_point }}"
-    owner: "{{ share_owner | default('root') }}"
-    group: "{{ share_group | default('root') }}"
-    mode: "{{ share_mode | default('0755') }}"
-    state: directory
-
-- name: Configure NFS exports
-  lineinfile:
-    path: /etc/exports
-    line: "{{ lvm_mount_point }} {{ nfs_clients }}({{ nfs_options }})"
-    create: yes
-  notify: restart nfs
-
-- name: Start and enable NFS services
-  service:
-    name: "{{ item }}"
-    state: started
-    enabled: yes
-  loop:
-    - nfs-kernel-server
-    - rpcbind
-
-- name: Export NFS shares
-  command: exportfs -ra
+    - name: Display mount status
+      debug:
+        msg: "{{ item.stdout }}"
+      loop: "{{ mount_check.results }}"
+      when: item.stdout is defined
