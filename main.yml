@@ -6,13 +6,15 @@
     
   vars:
     # Java Variables
-    java_version: "17"  # 8, 11, 17, 21
-    java_home: "/opt/java"
+    java_version: "17"  # เปลี่ยนได้: 8, 11, 17, 21
+    java_home: "/opt/azul-java"
+    
+    # Azul Zulu URLs
     java_urls:
-      "8": "https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u392-b08/OpenJDK8U-jdk_x64_linux_hotspot_8u392b08.tar.gz"
-      "11": "https://github.com/adoptium/temurin11-binaries/releases/download/jdk-11.0.21+9/OpenJDK11U-jdk_x64_linux_hotspot_11.0.21_9.tar.gz"
-      "17": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.9+9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.9_9.tar.gz"
-      "21": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.1+12/OpenJDK21U-jdk_x64_linux_hotspot_21.0.1_12.tar.gz"
+      "8": "https://cdn.azul.com/zulu/bin/zulu8.74.0.17-ca-jdk8.0.392-linux_x64.tar.gz"
+      "11": "https://cdn.azul.com/zulu/bin/zulu11.70.15-ca-jdk11.0.21-linux_x64.tar.gz"
+      "17": "https://cdn.azul.com/zulu/bin/zulu17.48.15-ca-jdk17.0.10-linux_x64.tar.gz"
+      "21": "https://cdn.azul.com/zulu/bin/zulu21.32.17-ca-jdk21.0.2-linux_x64.tar.gz"
     
 
     username: "appuser"
