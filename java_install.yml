@@ -1,46 +1,39 @@
 ---
-# java_install.yml - Tasks สำหรับติดตั้ง Java
-
-- name: Check if Java is already installed
+- name: Check if Java exists
   command: java -version
   register: java_check
   ignore_errors: yes
 
-- name: Show current Java version (if any)
-  debug:
-    var: java_check.stderr_lines
-
-- name: Install Java if not present
+- name: Install Java if not found
   when: java_check.rc != 0
   block:
-    - name: Download Java JDK
+    - name: Download Azul Java
       get_url:
         url: "{{ java_urls[java_version] }}"
         dest: "/tmp/java.tar.gz"
     
-- name: Create Java directory
-  file:
-    path: "{{ java_home }}"
-    state: directory
-    
-- name: Extract Java
-  unarchive:
-    src: "/tmp/java.tar.gz"
-    dest: "{{ java_home }}"
-    remote_src: yes
-    creates: "{{ java_home }}/bin"
-    strip_components: 1
-    
-- name: Set Java environment
-  lineinfile:
-    path: /etc/profile.d/java.sh
-    line: "{{ item }}"
-    create: yes
-  with_items:
-    - "export JAVA_HOME={{ java_home }}"
-    - "export PATH={{ java_home }}/bin:$PATH"
-    
-- name: Remove downloaded file
-  file:
-    path: "/tmp/java.tar.gz"
-    state: absent
+    - name: Create Java folder
+      file:
+        path: "{{ java_home }}"
+        state: directory
+        
+    - name: Extract Java
+      unarchive:
+        src: "/tmp/java.tar.gz"
+        dest: "{{ java_home }}"
+        remote_src: yes
+        strip_components: 1
+        
+    - name: Set Java PATH
+      lineinfile:
+        path: /etc/profile.d/java.sh
+        line: "{{ item }}"
+        create: yes
+      with_items:
+        - "export JAVA_HOME={{ java_home }}"
+        - "export PATH={{ java_home }}/bin:$PATH"
+        
+    - name: Clean up download
+      file:
+        path: "/tmp/java.tar.gz"
+        state: absent
