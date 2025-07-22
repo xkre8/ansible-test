@@ -1,43 +1,3 @@
-# ---
-# # filesystem_create.yml 
-# - name: Create filesystem directories
-#   ansible.builtin.file:
-#     path: "{{ item.path }}"
-#     state: directory
-#     owner: "{{ item.owner | default('root') }}"
-#     group: "{{ item.group | default('root') }}"
-#     mode: "{{ item.mode | default('0755') }}"
-#   loop: "{{ filesystem_dirs }}"
-
-# - name: Create disk image files for filesystem
-#   ansible.builtin.shell: |
-#     if [ ! -f {{ item.path }}.img ]; then
-#       dd if=/dev/zero of={{ item.path }}.img bs=1M count={{ item.size_mb }}
-#       mkfs.ext4 {{ item.path }}.img
-#     fi
-#   loop: "{{ filesystem_dirs }}"
-#   when: item.create_disk | default(false)
-
-# - name: Mount filesystem directories  
-#   ansible.builtin.mount:
-#     path: "{{ item.path }}"
-#     src: "{{ item.path }}.img"
-#     fstype: ext4
-#     opts: "defaults,loop"
-#     state: mounted  
-#   loop: "{{ filesystem_dirs }}"
-#   when: item.create_disk | default(false)
-
-# - name: Set ownership after mount
-#   ansible.builtin.file:
-#     path: "{{ item.path }}"
-#     owner: "{{ item.owner | default('root') }}"
-#     group: "{{ item.group | default('root') }}"
-#     mode: "{{ item.mode | default('0755') }}"
-#     recurse: yes
-#   loop: "{{ filesystem_dirs }}"
-#   when: item.create_disk | default(false)
-
 # filesystem_create.yml - LVM Version
 ---
 - name: Install LVM packages
@@ -65,13 +25,20 @@
   ansible.builtin.shell: vgcreate {{ volume_group_name }} {{ lvm_device }}
   when: vg_check.rc != 0
 
-- name: Create Logical Volumes
-  ansible.builtin.shell: |
-    if ! lvs {{ volume_group_name }}/{{ item.lv_name }} &>/dev/null; then
-      lvcreate -L {{ item.size_mb }}M -n {{ item.lv_name }} {{ volume_group_name }}
-    fi
+- name: Check existing Logical Volumes
+  ansible.builtin.shell: lvs --noheadings {{ volume_group_name }}/{{ item.lv_name }}
+  register: lv_check
+  failed_when: false
+  changed_when: false
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
+
+- name: Create Logical Volumes
+  ansible.builtin.shell: lvcreate -L {{ item.item.size_mb }}M -n {{ item.item.lv_name }} {{ volume_group_name }}
+  when: 
+    - item.item.create_lvm | default(false)
+    - item.rc != 0
+  loop: "{{ lv_check.results }}"
 
 - name: Create filesystems on Logical Volumes
   ansible.builtin.filesystem:
@@ -119,3 +86,4 @@
     recurse: yes
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
+

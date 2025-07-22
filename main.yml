@@ -9,11 +9,11 @@
     - vars/main2.yml 
 
   tasks:
-    - name: Install Java
-      ansible.builtin.include_tasks: tasks/java_install.yml  
+    # - name: Install Java
+    #   ansible.builtin.include_tasks: tasks/java_install.yml  
 
-    - name: Create User
-      ansible.builtin.include_tasks: tasks/user_create.yml
+    # - name: Create User
+    #   ansible.builtin.include_tasks: tasks/user_create.yml
 
     - name: Setup LVM File Share
       ansible.builtin.include_tasks: tasks/filesystem.yml

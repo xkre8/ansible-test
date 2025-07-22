@@ -3,7 +3,7 @@
 - name: Check if Java exists
   ansible.builtin.command: java -version
   register: java_check
-  ignore_errors: yes
+  ignore_errors: true
   changed_when: false
 
 - name: Install Java if not found
