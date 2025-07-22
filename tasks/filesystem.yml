@@ -1,5 +1,86 @@
+# ---
+# # filesystem_create.yml 
+# - name: Create filesystem directories
+#   ansible.builtin.file:
+#     path: "{{ item.path }}"
+#     state: directory
+#     owner: "{{ item.owner | default('root') }}"
+#     group: "{{ item.group | default('root') }}"
+#     mode: "{{ item.mode | default('0755') }}"
+#   loop: "{{ filesystem_dirs }}"
+
+# - name: Create disk image files for filesystem
+#   ansible.builtin.shell: |
+#     if [ ! -f {{ item.path }}.img ]; then
+#       dd if=/dev/zero of={{ item.path }}.img bs=1M count={{ item.size_mb }}
+#       mkfs.ext4 {{ item.path }}.img
+#     fi
+#   loop: "{{ filesystem_dirs }}"
+#   when: item.create_disk | default(false)
+
+# - name: Mount filesystem directories  
+#   ansible.builtin.mount:
+#     path: "{{ item.path }}"
+#     src: "{{ item.path }}.img"
+#     fstype: ext4
+#     opts: "defaults,loop"
+#     state: mounted  
+#   loop: "{{ filesystem_dirs }}"
+#   when: item.create_disk | default(false)
+
+# - name: Set ownership after mount
+#   ansible.builtin.file:
+#     path: "{{ item.path }}"
+#     owner: "{{ item.owner | default('root') }}"
+#     group: "{{ item.group | default('root') }}"
+#     mode: "{{ item.mode | default('0755') }}"
+#     recurse: yes
+#   loop: "{{ filesystem_dirs }}"
+#   when: item.create_disk | default(false)
+
+# filesystem_create.yml - LVM Version
 ---
-# filesystem_create.yml 
+- name: Install LVM packages
+  ansible.builtin.package:
+    name: lvm2
+    state: present
+
+- name: Check if Physical Volume exists
+  ansible.builtin.shell: pvs {{ lvm_device }} --noheadings
+  register: pv_check
+  failed_when: false
+  changed_when: false
+
+- name: Create Physical Volume
+  ansible.builtin.shell: pvcreate {{ lvm_device }}
+  when: pv_check.rc != 0
+
+- name: Check if Volume Group exists  
+  ansible.builtin.shell: vgs {{ volume_group_name }} --noheadings
+  register: vg_check
+  failed_when: false
+  changed_when: false
+
+- name: Create Volume Group
+  ansible.builtin.shell: vgcreate {{ volume_group_name }} {{ lvm_device }}
+  when: vg_check.rc != 0
+
+- name: Create Logical Volumes
+  ansible.builtin.shell: |
+    if ! lvs {{ volume_group_name }}/{{ item.lv_name }} &>/dev/null; then
+      lvcreate -L {{ item.size_mb }}M -n {{ item.lv_name }} {{ volume_group_name }}
+    fi
+  loop: "{{ filesystem_dirs }}"
+  when: item.create_lvm | default(false)
+
+- name: Create filesystems on Logical Volumes
+  ansible.builtin.filesystem:
+    fstype: "{{ item.fstype | default('xfs') }}"
+    dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    force: no
+  loop: "{{ filesystem_dirs }}"
+  when: item.create_lvm | default(false)
+
 - name: Create filesystem directories
   ansible.builtin.file:
     path: "{{ item.path }}"
@@ -9,24 +90,25 @@
     mode: "{{ item.mode | default('0755') }}"
   loop: "{{ filesystem_dirs }}"
 
-- name: Create disk image files for filesystem
-  ansible.builtin.shell: |
-    if [ ! -f {{ item.path }}.img ]; then
-      dd if=/dev/zero of={{ item.path }}.img bs=1M count={{ item.size_mb }}
-      mkfs.ext4 {{ item.path }}.img
-    fi
-  loop: "{{ filesystem_dirs }}"
-  when: item.create_disk | default(false)
-
-- name: Mount filesystem directories  
+- name: Mount LVM filesystems
   ansible.builtin.mount:
     path: "{{ item.path }}"
-    src: "{{ item.path }}.img"
-    fstype: ext4
-    opts: "defaults,loop"
-    state: mounted  
+    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    fstype: "{{ item.fstype | default('xfs') }}"
+    opts: "{{ item.mount_opts | default('defaults') }}"
+    state: mounted
   loop: "{{ filesystem_dirs }}"
-  when: item.create_disk | default(false)
+  when: item.create_lvm | default(false)
+
+- name: Add to /etc/fstab for persistent mounting
+  ansible.builtin.mount:
+    path: "{{ item.path }}"
+    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    fstype: "{{ item.fstype | default('xfs') }}"
+    opts: "{{ item.mount_opts | default('defaults') }}"
+    state: present
+  loop: "{{ filesystem_dirs }}"
+  when: item.create_lvm | default(false)
 
 - name: Set ownership after mount
   ansible.builtin.file:
@@ -36,4 +118,4 @@
     mode: "{{ item.mode | default('0755') }}"
     recurse: yes
   loop: "{{ filesystem_dirs }}"
-  when: item.create_disk | default(false)
+  when: item.create_lvm | default(false)
