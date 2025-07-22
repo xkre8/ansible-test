@@ -1,0 +1,78 @@
+# java_install.yml
+---
+- name: Check if Java exists
+  ansible.builtin.command: java -version
+  register: java_check
+  ignore_errors: yes
+  changed_when: false
+
+- name: Install Java if not found
+  when: java_check.rc != 0
+  block:
+    - name: Download OpenJDK
+      ansible.builtin.get_url:
+        url: "{{ java_urls[java_version] }}"
+        dest: "/tmp/java.tar.gz"
+        mode: '0644'
+        
+    - name: Create Java folder
+      ansible.builtin.file:
+        path: "{{ java_home }}"
+        state: directory
+        mode: '0755'
+            
+    - name: Extract Java
+      ansible.builtin.unarchive:
+        src: "/tmp/java.tar.gz"
+        dest: "{{ java_home }}"
+        remote_src: yes
+        extra_opts: ['--strip-components=1']
+            
+    - name: Set Java PATH for all users
+      ansible.builtin.blockinfile:
+        path: /etc/profile
+        block: |
+          # Java Environment Settings
+          export JAVA_HOME={{ java_home }}
+          export PATH=$JAVA_HOME/bin:$PATH
+        marker: "# {mark} ANSIBLE MANAGED JAVA BLOCK"
+        insertafter: EOF
+        create: yes
+        mode: '0644'
+        
+    - name: Create symbolic links
+      ansible.builtin.file:
+        src: "{{ java_home }}/bin/{{ item }}"
+        dest: "/usr/bin/{{ item }}"
+        state: link
+      with_items:
+        - java
+        - javac
+            
+    - name: Clean up download
+      ansible.builtin.file:
+        path: "/tmp/java.tar.gz"
+        state: absent
+
+# Alternative method using package manager (recommended)
+- name: Install OpenJDK using package manager (alternative)
+  when: use_package_manager | default(false)
+  block:
+    - name: Install OpenJDK on Ubuntu/Debian
+      ansible.builtin.apt:
+        name: "openjdk-{{ java_version }}-jdk"
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+      
+    - name: Install OpenJDK on CentOS/RHEL
+      ansible.builtin.yum:
+        name: "java-{{ java_version }}-openjdk-devel"
+        state: present
+      when: ansible_os_family == "RedHat" and ansible_distribution_major_version|int < 8
+      
+    - name: Install OpenJDK on CentOS/RHEL 8+
+      ansible.builtin.dnf:
+        name: "java-{{ java_version }}-openjdk-devel"
+        state: present
+      when: ansible_os_family == "RedHat" and ansible_distribution_major_version|int >= 8

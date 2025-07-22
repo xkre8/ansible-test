@@ -1,0 +1,77 @@
+# vars/main.yml
+
+
+# Java Variables
+java_version: "21"
+java_home: "/opt/openjdk"
+
+# Set to true if you want to use package manager instead of manual installation
+use_package_manager: true
+
+# OpenJDK Download URLs (for manual installation)
+java_urls:
+  "8": "https://github.com/adoptium/temurin8-binaries/releases/download/jdk8u392-b08/OpenJDK8U-jdk_x64_linux_hotspot_8u392b08.tar.gz"
+  "11": "https://github.com/adoptium/temurin11-binaries/releases/download/jdk-11.0.21%2B9/OpenJDK11U-jdk_x64_linux_hotspot_11.0.21_9.tar.gz"
+  "17": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.9%2B9/OpenJDK17U-jdk_x64_linux_hotspot_17.0.9_9.tar.gz"
+  "21": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.1%2B12/OpenJDK21U-jdk_x64_linux_hotspot_21.0.1_12.tar.gz"
+
+# Package manager Java versions mapping
+package_versions:
+  ubuntu:
+    "8": "openjdk-8-jdk"
+    "11": "openjdk-11-jdk" 
+    "17": "openjdk-17-jdk"
+    "21": "openjdk-21-jdk"
+  centos:
+    "8": "java-1.8.0-openjdk-devel"
+    "11": "java-11-openjdk-devel"
+    "17": "java-17-openjdk-devel"
+    "21": "java-21-openjdk-devel"
+
+# User Info
+username: "jbadm"
+user_group: "jbgrp"
+user_password: "mypassword123"
+user_sudo: true
+user_uid: 1005
+user_gid: 1005
+user_home: "/home/jbadm"
+
+# Filesystem Definitions
+filesystem_dirs:
+  - path: "/opt/REDHAT"
+    owner: "root"
+    group: "root"
+    mode: "0755"
+    create_disk: true
+    size_mb: 1024
+  - path: "/data/tomcat_logs"
+    owner: "{{ username }}"
+    group: "{{ user_group }}"
+    mode: "0755"
+    create_disk: true
+    size_mb: 1024
+  - path: "/data/tomcat_archive"
+    owner: "{{ username }}"
+    group: "{{ user_group }}"
+    mode: "0755"
+    create_disk: true
+    size_mb: 1024
+  - path: "/jdump"
+    owner: "{{ username }}"
+    group: "{{ user_group }}"
+    mode: "0755"
+    create_disk: true
+    size_mb: 1024
+  - path: "/scripts"
+    owner: "{{ username }}"
+    group: "{{ user_group }}"
+    mode: "0755"
+    create_disk: true
+    size_mb: 1024
+  - path: "/mdw_app_deploy"
+    owner: "{{ username }}"
+    group: "{{ user_group }}"
+    mode: "0755"
+    create_disk: true
+    size_mb: 1024

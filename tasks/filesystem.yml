@@ -1,7 +1,7 @@
 ---
-# filesystem_create.yml - Tasks สำหรับสร้าง Filesystem
+# filesystem_create.yml 
 - name: Create filesystem directories
-  file:
+  ansible.builtin.file:
     path: "{{ item.path }}"
     state: directory
     owner: "{{ item.owner | default('root') }}"
@@ -10,7 +10,7 @@
   loop: "{{ filesystem_dirs }}"
 
 - name: Create disk image files for filesystem
-  shell: |
+  ansible.builtin.shell: |
     if [ ! -f {{ item.path }}.img ]; then
       dd if=/dev/zero of={{ item.path }}.img bs=1M count={{ item.size_mb }}
       mkfs.ext4 {{ item.path }}.img
@@ -18,18 +18,18 @@
   loop: "{{ filesystem_dirs }}"
   when: item.create_disk | default(false)
 
-- name: Mount filesystem directories
-  mount:
+- name: Mount filesystem directories  
+  ansible.builtin.mount:
     path: "{{ item.path }}"
     src: "{{ item.path }}.img"
     fstype: ext4
-    opts: loop
-    state: mounted
+    opts: "defaults,loop"
+    state: mounted  
   loop: "{{ filesystem_dirs }}"
   when: item.create_disk | default(false)
 
 - name: Set ownership after mount
-  file:
+  ansible.builtin.file:
     path: "{{ item.path }}"
     owner: "{{ item.owner | default('root') }}"
     group: "{{ item.group | default('root') }}"

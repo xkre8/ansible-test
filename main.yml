@@ -4,70 +4,16 @@
   hosts: all
   become: yes
     
-  vars:
-    # Java Variables
-    java_version: "17"  # เปลี่ยนได้: 8, 11, 17, 21
-    java_home: "/opt/azul-java"
-    
-    # Azul Zulu URLs
-    java_urls:
-      "8": "https://cdn.azul.com/zulu/bin/zulu8.74.0.17-ca-jdk8.0.392-linux_x64.tar.gz"
-      "11": "https://cdn.azul.com/zulu/bin/zulu11.70.15-ca-jdk11.0.21-linux_x64.tar.gz"
-      "17": "https://cdn.azul.com/zulu/bin/zulu17.48.15-ca-jdk17.0.10-linux_x64.tar.gz"
-      "21": "https://cdn.azul.com/zulu/bin/zulu21.32.17-ca-jdk21.0.2-linux_x64.tar.gz"
-    
-
-    username: "appuser"
-    user_group: "appgroup"
-    user_password: "mypassword123"  
-    user_sudo: true  
-
-#filesystem
-    filesystem_dirs:
-      - path: "/opt/REDHAT"
-        owner: "root"
-        group: "root"
-        mode: "0755"
-        create_disk: true
-        size_mb: 1024  # 1GB
-      - path: "/data/tomcat_logs"
-        owner: "{{ username }}"
-        group: "{{ user_group }}"
-        mode: "0755"
-        create_disk: true
-        size_mb: 2048  # 2GB
-      - path: "/data/tomcat_archive"
-        owner: "{{ username }}"
-        group: "{{ user_group }}"
-        mode: "0755"
-        create_disk: true
-        size_mb: 5120  # 5GB
-      - path: "/jdump"
-        owner: "{{ username }}"
-        group: "{{ user_group }}"
-        mode: "0755"
-        create_disk: true
-        size_mb: 512   # 512MB
-      - path: "/scripts"
-        owner: "{{ username }}"
-        group: "{{ user_group }}"
-        mode: "0755"
-        create_disk: false  # ไม่สร้าง disk image, ใช้ directory ธรรมดา
-      - path: "/mdw_app_deploy"
-        owner: "{{ username }}"
-        group: "{{ user_group }}"
-        mode: "0755"
-        create_disk: true
-        size_mb: 3072  # 3GB
+  vars_files:
+    - vars/main.yml 
+    - vars/main2.yml 
 
   tasks:
-      
-    # Java Installation Tasks
-    # - name: Install Java
-    #   ansible.builtin.include_tasks: java_install.yml
+    - name: Install Java
+      ansible.builtin.include_tasks: tasks/java_install.yml  
 
     - name: Create User
-      include_tasks: user_create.yml
+      ansible.builtin.include_tasks: tasks/user_create.yml
 
     - name: Setup LVM File Share
-      include_tasks: filesystem.yml
+      ansible.builtin.include_tasks: tasks/filesystem.yml
