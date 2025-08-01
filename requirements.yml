@@ -1,0 +1,5 @@
+---
+collections:
+  - name: https://github.com/xkre8/ansible-test.git
+    type: git
+    version: main

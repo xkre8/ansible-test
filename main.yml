@@ -1,10 +1,9 @@
----
 - name: Infrastructure Setup
   hosts: all
   become: yes
   collections:
     - company.infrastructure
-  
+
   tasks:
     - name: Setup LVM Management
       ansible.builtin.include_role:
@@ -12,14 +11,14 @@
       vars:
         lvm_device: "/dev/sdc"
         volume_group_name: "jbdmvg"
-    
+
     - name: Setup Java Management
       ansible.builtin.include_role:
         name: company.infrastructure.java_management
       vars:
         java_version: "21"
         use_package_manager: true
-    
+
     - name: Setup User Management
       ansible.builtin.include_role:
         name: company.infrastructure.user_management
