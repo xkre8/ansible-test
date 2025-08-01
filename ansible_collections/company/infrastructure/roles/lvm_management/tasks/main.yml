@@ -1,4 +1,3 @@
-# filesystem_create.yml - LVM Version
 ---
 - name: Install LVM packages
   ansible.builtin.package:
@@ -15,7 +14,7 @@
   ansible.builtin.shell: pvcreate {{ lvm_device }}
   when: pv_check.rc != 0
 
-- name: Check if Volume Group exists  
+- name: Check if Volume Group exists
   ansible.builtin.shell: vgs {{ volume_group_name }} --noheadings
   register: vg_check
   failed_when: false
@@ -76,14 +75,3 @@
     state: present
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
-
-- name: Set ownership after mount
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    owner: "{{ item.owner | default('root') }}"
-    group: "{{ item.group | default('root') }}"
-    mode: "{{ item.mode | default('0755') }}"
-    recurse: yes
-  loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(false)
-

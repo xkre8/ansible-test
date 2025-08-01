@@ -1,7 +1,7 @@
 all:
   hosts:
     jboss:
-      ansible_host: 4.194.128.190
+      ansible_host: 4.194.80.174
       ansible_user: azureuser
       ansible_ssh_private_key_file: ./my-app-key.pem
     # jws:

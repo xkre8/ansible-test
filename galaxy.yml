@@ -1,0 +1,19 @@
+namespace: company
+name: infrastructure
+version: 1.0.0
+readme: README.md
+authors:
+  - "Infrastructure Team <infra@company.com>"
+description: Infrastructure management collection for Java, Users, and LVM
+license:
+  - GPL-2.0-or-later
+repository: "https://github.com/company/ansible-infrastructure"  
+homepage: "https://company.com/infrastructure" 
+issues: "https://github.com/company/ansible-infrastructure/issues"  
+documentation: "https://docs.company.com/ansible"
+tags:
+  - infrastructure
+  - java
+  - lvm
+  - user_management
+dependencies: {}

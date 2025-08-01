@@ -1,19 +1,30 @@
 ---
-# main.yml - Main Playbook
-- name: User and Java Management
+- name: Infrastructure Setup
   hosts: all
   become: yes
-    
-  vars_files:
-    - vars/main.yml 
-    - vars/main2.yml 
-
+  collections:
+    - company.infrastructure
+  
   tasks:
-    # - name: Install Java
-    #   ansible.builtin.include_tasks: tasks/java_install.yml  
-
-    # - name: Create User
-    #   ansible.builtin.include_tasks: tasks/user_create.yml
-
-    - name: Setup LVM File Share
-      ansible.builtin.include_tasks: tasks/filesystem.yml
+    - name: Setup LVM Management
+      ansible.builtin.include_role:
+        name: company.infrastructure.lvm_management
+      vars:
+        lvm_device: "/dev/sdc"
+        volume_group_name: "jbdmvg"
+    
+    - name: Setup Java Management
+      ansible.builtin.include_role:
+        name: company.infrastructure.java_management
+      vars:
+        java_version: "21"
+        use_package_manager: true
+    
+    - name: Setup User Management
+      ansible.builtin.include_role:
+        name: company.infrastructure.user_management
+      vars:
+        username: "jbadm"
+        user_group: "jbgrp"
+        user_password: "mypassword123"
+        user_sudo: true

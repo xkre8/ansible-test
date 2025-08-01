@@ -1,0 +1,64 @@
+---
+lvm_device: "/dev/sdc"
+volume_group_name: "jbdmvg"
+
+filesystem_dirs:
+  - path: "/opt/REDHAT"
+    lv_name: "REDHAT"
+    owner: "root"
+    group: "root"
+    mode: "0755"
+    create_lvm: true
+    size_mb: 1024
+    fstype: "xfs"
+    mount_opts: "defaults"
+    
+  - path: "/data/jboss_logs"
+    lv_name: "jboss_logs"
+    owner: "root"
+    group: "root"
+    mode: "0755"
+    create_lvm: true
+    size_mb: 1024
+    fstype: "xfs"
+    mount_opts: "defaults"
+    
+  - path: "/data/jboss_archive"
+    lv_name: "jboss_archive"
+    owner: "root"
+    group: "root"
+    mode: "0755"
+    create_lvm: true
+    size_mb: 1024
+    fstype: "xfs"
+    mount_opts: "defaults"
+
+  - path: "/jdump"
+    lv_name: "jdump"
+    owner: "root"
+    group: "root"
+    mode: "0755"
+    create_lvm: true
+    size_mb: 1024
+    fstype: "xfs"
+    mount_opts: "defaults"
+
+  - path: "/scripts"
+    lv_name: "scripts"
+    owner: "root"
+    group: "root"
+    mode: "0755"
+    create_lvm: true
+    size_mb: 1024
+    fstype: "xfs"
+    mount_opts: "defaults"
+
+  - path: "/mdw_app_deploy"
+    lv_name: "mdw_app_deploy"
+    owner: "root"
+    group: "root"
+    mode: "0755"
+    create_lvm: true
+    size_mb: 1024
+    fstype: "xfs"
+    mount_opts: "defaults"
