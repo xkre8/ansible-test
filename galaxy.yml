@@ -19,7 +19,6 @@ tags:
   - user_management
 dependencies: {}
 
-# เพิ่มส่วนนี้
 build_ignore:
   - '*.pyc'
   - '*.retry'
@@ -27,3 +26,7 @@ build_ignore:
   - '.gitignore'
   - '.DS_Store'
   - 'tests/'
+  - '__pycache__'
+  - '*.tar.gz'
+
+
