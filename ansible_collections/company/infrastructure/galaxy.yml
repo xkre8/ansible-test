@@ -1,3 +1,4 @@
+# repo1/galaxy.yml
 namespace: company
 name: infrastructure
 version: 1.0.0
@@ -17,3 +18,12 @@ tags:
   - lvm
   - user_management
 dependencies: {}
+
+# เพิ่มส่วนนี้
+build_ignore:
+  - '*.pyc'
+  - '*.retry'
+  - '.git'
+  - '.gitignore'
+  - '.DS_Store'
+  - 'tests/'
