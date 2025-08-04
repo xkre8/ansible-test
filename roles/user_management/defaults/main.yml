@@ -2,7 +2,7 @@
 username: ""
 user_group: ""
 user_password: ""
-user_sudo: true
+# user_sudo: true
 user_uid: 1005
 user_gid: 1005
 user_home: "/home/{{ username }}"
