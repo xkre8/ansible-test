@@ -62,8 +62,16 @@
     - item.rc != 0
   loop: "{{ lv_check.results }}"
 
+# - name: Create filesystems on Logical Volumes
+#   ansible.builtin.filesystem:
+#     fstype: "{{ item.fstype | default('xfs') }}"
+#     dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+#     force: no
+#   loop: "{{ filesystem_dirs }}"
+#   when: item.create_lvm | default(false)
+
 - name: Create filesystems on Logical Volumes
-  ansible.builtin.filesystem:
+  community.general.filesystem:
     fstype: "{{ item.fstype | default('xfs') }}"
     dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
     force: no
