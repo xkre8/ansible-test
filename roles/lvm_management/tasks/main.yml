@@ -4,6 +4,12 @@
     filesystem_dirs: "{{ filesystem_config_yaml | from_yaml }}"
   when: filesystem_config_yaml is defined
 
+- name: Set default lv_name if not provided
+  set_fact:
+    filesystem_dirs: "{{ filesystem_dirs | map('combine', {'lv_name': item.lv_name | default(item.path | basename)}) | list }}"
+  loop: "{{ filesystem_dirs }}"
+  when: filesystem_dirs is defined
+  
 - name: Install LVM packages
   ansible.builtin.package:
     name: lvm2
