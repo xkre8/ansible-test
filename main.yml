@@ -5,25 +5,20 @@
     - company.infrastructure
 
   tasks:
-    - name: Setup LVM Management
-      ansible.builtin.include_role:
-        name: company.infrastructure.lvm_management
-      vars:
-        lvm_device: "/dev/sdc"
-        volume_group_name: "jbdmvg"
+    # - name: Setup LVM Management
+    #   ansible.builtin.include_role:
+    #     name: company.infrastructure.lvm_management
+    #   vars:
+    #     lvm_device: "/dev/sdc"
+    #     volume_group_name: "jbdmvg"
 
-    - name: Setup Java Management
-      ansible.builtin.include_role:
-        name: company.infrastructure.java_management
-      vars:
-        java_version: "21"
-        use_package_manager: true
+    # - name: Setup Java Management
+    #   ansible.builtin.include_role:
+    #     name: company.infrastructure.java_management
+    #   vars:
+    #     java_version: "21"
+    #     use_package_manager: true
 
     - name: Setup User Management
       ansible.builtin.include_role:
         name: company.infrastructure.user_management
-      vars:
-        username: "jbadm"
-        user_group: "jbgrp"
-        user_password: "mypassword123"
-        user_sudo: true
