@@ -1,4 +1,27 @@
 ---
+- name: Parse filesystem configuration
+  ansible.builtin.set_fact:
+    parsed_filesystems: "{{ filesystem_config | from_yaml }}"
+
+- name: Build complete filesystem configuration
+  ansible.builtin.set_fact:
+    filesystem_dirs: |
+      [
+        {% for fs in parsed_filesystems %}
+        {
+          "path": "{{ fs.path }}",
+          "lv_name": "{{ fs.lv_name }}",
+          "owner": "{{ fs.owner | default('root') }}",
+          "group": "{{ fs.group | default('root') }}",
+          "mode": "{{ fs.mode | default('0755') }}",
+          "create_lvm": {{ fs.create_lvm | default(true) | lower }},
+          "size_mb": {{ fs.size_mb }},
+          "fstype": "{{ fs.fstype | default('xfs') }}",
+          "mount_opts": "{{ fs.mount_opts | default('defaults') }}"
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+      ]
+      
 - name: Install LVM packages
   ansible.builtin.package:
     name: lvm2
