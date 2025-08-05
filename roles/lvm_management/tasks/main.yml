@@ -58,6 +58,14 @@
 
 
 ---
+- name: Parse filesystem_dirs from YAML string
+  ansible.builtin.set_fact:
+    filesystem_dirs: "{{ filesystem_dirs | from_yaml }}"
+  when: 
+    - filesystem_dirs is defined
+    - filesystem_dirs is string
+    - filesystem_dirs != ""
+    
 - name: Debug - Show variables from survey
   ansible.builtin.debug:
     msg:
