@@ -56,51 +56,67 @@
 #   loop: "{{ filesystem_dirs }}"
 #   when: item.create_lvm | default(false)
 
-
 ---
-- name: Parse filesystem_dirs from YAML string
+# Parse survey input (add these tasks first)
+- name: Parse filesystem configuration
   ansible.builtin.set_fact:
-    filesystem_dirs: "{{ filesystem_dirs | from_yaml }}"
-  when: 
-    - filesystem_dirs is defined
-    - filesystem_dirs is string
-    - filesystem_dirs != ""
-    
-- name: Debug - Show variables from survey
-  ansible.builtin.debug:
-    msg:
-      - "filesystem_dirs: {{ filesystem_dirs }}"
-      - "lvm_device: {{ lvm_device }}"
-      - "volume_group_name: {{ volume_group_name }}"
+    parsed_filesystems: "{{ filesystem_config | from_yaml }}"
+  when: filesystem_config is defined
 
+- name: Build complete filesystem configuration
+  ansible.builtin.set_fact:
+    filesystem_dirs: |
+      [
+        {% for fs in parsed_filesystems %}
+        {
+          "path": "{{ fs.path }}",
+          "lv_name": "{{ fs.lv_name }}",
+          "owner": "{{ fs.owner | default('root') }}",
+          "group": "{{ fs.group | default('root') }}",
+          "mode": "{{ fs.mode | default('0755') }}",
+          "create_lvm": {{ fs.create_lvm | default(true) | lower }},
+          "size_mb": {{ fs.size_mb }},
+          "fstype": "{{ fs.fstype | default('xfs') }}",
+          "mount_opts": "{{ fs.mount_opts | default('defaults') }}"
+        }{% if not loop.last %},{% endif %}
+        {% endfor %}
+      ]
+  when: filesystem_config is defined
+
+# Install required packages
 - name: Install LVM packages
   ansible.builtin.package:
     name: lvm2
     state: present
 
-- name: Create Physical Volume
+# Create Volume Group with Physical Volume
+- name: Create Volume Group and Physical Volume
   community.general.lvg:
     vg: "{{ volume_group_name }}"
     pvs: "{{ lvm_device }}"
     state: present
+  when: lvm_device is defined and lvm_device != ""
 
+# Create Logical Volumes
 - name: Create Logical Volumes
   community.general.lvol:
     vg: "{{ volume_group_name }}"
-    lv: "{{ item.lv_name | default(item.path | basename) }}"
+    lv: "{{ item.lv_name }}"
     size: "{{ item.size_mb }}m"
     state: present
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
 
-- name: Create filesystems
+# Create filesystems
+- name: Create filesystems on Logical Volumes
   community.general.filesystem:
     fstype: "{{ item.fstype | default('xfs') }}"
-    dev: "/dev/{{ volume_group_name }}/{{ item.lv_name | default(item.path | basename) }}"
-    state: present
+    dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    force: no
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
 
+# Create mount directories
 - name: Create mount directories
   ansible.builtin.file:
     path: "{{ item.path }}"
@@ -110,30 +126,31 @@
     mode: "{{ item.mode | default('0755') }}"
   loop: "{{ filesystem_dirs }}"
 
-- name: Mount filesystems and add to fstab
+# Mount filesystems temporarily
+- name: Mount filesystems
   ansible.posix.mount:
     path: "{{ item.path }}"
-    src: "/dev/{{ volume_group_name }}/{{ item.lv_name | default(item.path | basename) }}"
+    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
     fstype: "{{ item.fstype | default('xfs') }}"
     opts: "{{ item.mount_opts | default('defaults') }}"
     state: mounted
-    backup: yes
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
 
-# Optional: Verify mounts are working
-- name: Verify filesystem mounts
-  ansible.builtin.stat:
+# Add to fstab for persistent mounting
+- name: Add filesystems to /etc/fstab
+  ansible.posix.mount:
     path: "{{ item.path }}"
-  register: mount_check
+    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    fstype: "{{ item.fstype | default('xfs') }}"
+    opts: "{{ item.mount_opts | default('defaults') }}"
+    state: present
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
 
-- name: Display mount status
+# Verify mounted filesystems
+- name: Display mounted filesystems
   ansible.builtin.debug:
-    msg: "{{ item.item.path }} is {{ 'mounted' if item.stat.exists else 'not mounted' }}"
-  loop: "{{ mount_check.results | default([]) }}"
-  when: 
-    - mount_check is defined
-    - item.item is defined
-    - item.item.create_lvm | default(false)
+    msg: "{{ item.lv_name }} mounted at {{ item.path }} ({{ item.size_mb }}MB)"
+  loop: "{{ filesystem_dirs }}"
+  when: item.create_lvm | default(false)
