@@ -97,8 +97,17 @@
 #   loop: "{{ filesystem_dirs }}"
 #   when: item.create_lvm | default(false)
 
-
 ---
+# Debug: Show variables
+- name: Debug - Show filesystem_dirs variable
+  ansible.builtin.debug:
+    var: filesystem_dirs
+  when: filesystem_dirs is defined
+
+- name: Debug - Show volume_group_name and lvm_device
+  ansible.builtin.debug:
+    msg: "VG: {{ volume_group_name | default('NOT_SET') }}, Device: {{ lvm_device | default('NOT_SET') }}"
+
 - name: Install LVM packages
   ansible.builtin.package:
     name: lvm2
@@ -109,6 +118,9 @@
     vg: "{{ volume_group_name }}"
     pvs: "{{ lvm_device }}"
     state: present
+  when: 
+    - volume_group_name is defined
+    - lvm_device is defined
 
 - name: Create Logical Volumes
   community.general.lvol:
@@ -116,16 +128,22 @@
     lv: "{{ item.lv_name | default(item.path | basename) }}"
     size: "{{ item.size_mb }}m"
     state: present
-  loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(false)
+  loop: "{{ filesystem_dirs | default([]) }}"
+  when: 
+    - filesystem_dirs is defined
+    - filesystem_dirs | length > 0
+    - item.create_lvm | default(false)
 
 - name: Create filesystems
   community.general.filesystem:
     fstype: "{{ item.fstype | default('xfs') }}"
     dev: "/dev/{{ volume_group_name }}/{{ item.lv_name | default(item.path | basename) }}"
     state: present
-  loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(false)
+  loop: "{{ filesystem_dirs | default([]) }}"
+  when: 
+    - filesystem_dirs is defined
+    - filesystem_dirs | length > 0
+    - item.create_lvm | default(false)
 
 - name: Create mount directories
   ansible.builtin.file:
@@ -134,7 +152,10 @@
     owner: "{{ item.owner | default('root') }}"
     group: "{{ item.group | default('root') }}"
     mode: "{{ item.mode | default('0755') }}"
-  loop: "{{ filesystem_dirs }}"
+  loop: "{{ filesystem_dirs | default([]) }}"
+  when: 
+    - filesystem_dirs is defined
+    - filesystem_dirs | length > 0
 
 - name: Mount filesystems and add to fstab
   ansible.posix.mount:
@@ -144,8 +165,11 @@
     opts: "{{ item.mount_opts | default('defaults') }}"
     state: mounted
     backup: yes
-  loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(false)
+  loop: "{{ filesystem_dirs | default([]) }}"
+  when: 
+    - filesystem_dirs is defined
+    - filesystem_dirs | length > 0
+    - item.create_lvm | default(false)
 
 # Optional: Verify mounts are working
 - name: Verify filesystem mounts
