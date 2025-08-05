@@ -55,16 +55,21 @@
 #     state: present
 #   loop: "{{ filesystem_dirs }}"
 #   when: item.create_lvm | default(false)
+
 ---
-# Parse survey input (add these tasks first)
+# Parse survey input
 - name: Parse filesystem configuration
   ansible.builtin.set_fact:
     parsed_filesystems: "{{ filesystem_config | from_yaml }}"
   when: filesystem_config is defined
 
+- name: Initialize filesystem_dirs as empty list
+  ansible.builtin.set_fact:
+    filesystem_dirs: []
+
 - name: Build complete filesystem configuration
   ansible.builtin.set_fact:
-    filesystem_dirs: "{{ filesystem_dirs | default([]) + [item] }}"
+    filesystem_dirs: "{{ filesystem_dirs + [item] }}"
   vars:
     item:
       path: "{{ fs.path }}"
@@ -93,7 +98,11 @@
     vg: "{{ volume_group_name }}"
     pvs: "{{ lvm_device }}"
     state: present
-  when: lvm_device is defined and lvm_device != ""
+  when: 
+    - lvm_device is defined 
+    - lvm_device != ""
+    - volume_group_name is defined
+    - volume_group_name != ""
 
 # Create Logical Volumes
 - name: Create Logical Volumes
@@ -103,7 +112,10 @@
     size: "{{ item.size_mb }}m"
     state: present
   loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(false)
+  when: 
+    - item.create_lvm | default(false)
+    - volume_group_name is defined
+    - volume_group_name != ""
 
 # Create filesystems
 - name: Create filesystems on Logical Volumes
@@ -124,7 +136,7 @@
     mode: "{{ item.mode | default('0755') }}"
   loop: "{{ filesystem_dirs }}"
 
-# Mount filesystems temporarily
+# Mount filesystems
 - name: Mount filesystems
   ansible.posix.mount:
     path: "{{ item.path }}"
