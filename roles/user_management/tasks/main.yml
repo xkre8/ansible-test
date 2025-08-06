@@ -1,36 +1,85 @@
+# ---
+# - name: Create user group
+#   ansible.builtin.group:
+#     name: "{{ user_group }}"
+#     gid: "{{ user_gid }}"
+#     state: present
+
+# - name: Create user
+#   ansible.builtin.user:
+#     name: "{{ username }}"
+#     group: "{{ user_group }}"
+#     uid: "{{ user_uid }}"
+#     home: "{{ user_home }}"
+#     password: "{{ user_password | password_hash('sha512') }}"
+#     shell: /bin/bash
+#     create_home: yes
+#     state: present
+
+# - name: Add user to sudo group
+#   ansible.builtin.user:
+#     name: "{{ username }}"
+#     groups: sudo,wheel
+#     append: yes
+#   when: user_sudo | default(false)
+
+# - name: Set up SSH directory for user
+#   ansible.builtin.file:
+#     path: "{{ user_home }}/.ssh"
+#     state: directory
+#     owner: "{{ username }}"
+#     group: "{{ user_group }}"
+#     mode: '0700'
+
+# - name: Display user creation result
+#   ansible.builtin.debug:
+#     msg: "User {{ username }} created successfully with UID {{ user_uid }}"
+
 ---
-- name: Create user group
+- name: "Create groups that don't exist"
   ansible.builtin.group:
-    name: "{{ user_group }}"
-    gid: "{{ user_gid }}"
+    name: "{{ item }}"
     state: present
+  loop: "{{ users | selectattr('gid', 'defined') | selectattr('gid', '!=', '') | map(attribute='gid') | list | unique }}"
+  when: item != default_group
 
-- name: Create user
+- name: "Generate random values for empty fields"
+  ansible.builtin.set_fact:
+    processed_users: "{{ processed_users | default([]) + [processed_user] }}"
+  vars:
+    random_username: "user_{{ 999999 | random }}"
+    final_username: "{{ item.username if (item.username is defined and item.username != '') else random_username }}"
+    processed_user:
+      name: "{{ final_username }}"
+      uid: "{{ item.uid if (item.uid is defined and item.uid != '') else (range(uid_min, uid_max) | random) }}"
+      group: "{{ item.gid if (item.gid is defined and item.gid != '') else default_group }}"
+      password: "{{ item.password if (item.password is defined and item.password != '') else lookup('password', '/dev/null length=' + password_length|string + ' chars=ascii_letters,digits') }}"
+      home: "{{ item.home_directory if (item.home_directory is defined and item.home_directory != '') else home_base_path + '/' + final_username }}"
+      shell: "{{ item.shell | default(default_shell) }}"
+      groups: "{{ item.groupname if (item.groupname is defined and item.groupname != '') else omit }}"
+      comment: "{{ item.comment | default('Managed by Ansible') }}"
+  loop: "{{ users }}"
+
+- name: "Create users"
   ansible.builtin.user:
-    name: "{{ username }}"
-    group: "{{ user_group }}"
-    uid: "{{ user_uid }}"
-    home: "{{ user_home }}"
-    password: "{{ user_password | password_hash('sha512') }}"
-    shell: /bin/bash
-    create_home: yes
+    name: "{{ item.name }}"
+    uid: "{{ item.uid }}"
+    group: "{{ item.group }}"
+    groups: "{{ item.groups }}"
+    password: "{{ item.password | password_hash('sha512') }}"
+    home: "{{ item.home }}"
+    shell: "{{ item.shell }}"
+    create_home: "{{ create_home }}"
+    comment: "{{ item.comment }}"
     state: present
+  loop: "{{ processed_users }}"
 
-- name: Add user to sudo group
-  ansible.builtin.user:
-    name: "{{ username }}"
-    groups: sudo,wheel
-    append: yes
-  when: user_sudo | default(false)
-
-- name: Set up SSH directory for user
+- name: "Set home directory permissions"
   ansible.builtin.file:
-    path: "{{ user_home }}/.ssh"
+    path: "{{ item.home }}"
+    owner: "{{ item.name }}"
+    group: "{{ item.group }}"
+    mode: '0755'
     state: directory
-    owner: "{{ username }}"
-    group: "{{ user_group }}"
-    mode: '0700'
-
-- name: Display user creation result
-  ansible.builtin.debug:
-    msg: "User {{ username }} created successfully with UID {{ user_uid }}"
+  loop: "{{ processed_users }}"
+  when: create_home | bool
