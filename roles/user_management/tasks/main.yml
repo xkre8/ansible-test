@@ -1,8 +1,13 @@
 ---
 - name: "Parse user_yml if provided"
   ansible.builtin.set_fact:
-    users: "{{ user_yml | from_yaml if user_yml is defined and user_yml != '' else users }}"
-  when: user_yml is defined
+    users: "{{ user_yml | from_yaml }}"
+  when: user_yml is defined and user_yml != ''
+
+- name: "Debug users list"
+  ansible.builtin.debug:
+    msg: "Users to process: {{ users | length }} users"
+  when: users | length > 0
 
 - name: "Create groups that don't exist"
   ansible.builtin.group:
