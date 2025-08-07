@@ -25,7 +25,7 @@
       password: "{{ item.password if (item.password is defined and item.password != '') else lookup('password', '/dev/null length=' + password_length|string + ' chars=ascii_letters,digits') }}"
       home: "{{ item.home_directory if (item.home_directory is defined and item.home_directory != '') else home_base_path + '/' + final_username }}"
       shell: "{{ item.shell | default(default_shell) }}"
-      groups: "{{ item.groupname if (item.groupname is defined and item.groupname != '') else omit }}"
+      groups: "{{ item.groupname if (item.groupname is defined and item.groupname != '') else '' }}"
       comment: "{{ item.comment | default('Managed by Ansible') }}"
   loop: "{{ users }}"
 
@@ -34,7 +34,7 @@
     name: "{{ item.name }}"
     uid: "{{ item.uid }}"
     group: "{{ item.group }}"
-    groups: "{{ item.groups }}"
+    groups: "{{ item.groups if item.groups != '' else omit }}"
     password: "{{ item.password | password_hash('sha512') }}"
     home: "{{ item.home }}"
     shell: "{{ item.shell }}"
