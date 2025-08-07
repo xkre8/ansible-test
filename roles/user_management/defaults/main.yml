@@ -18,4 +18,25 @@ password_length: 12
 home_base_path: "/home"
 
 
+# users_yaml: |
+#   - username: "john"
+#     uid: 1500
+#     gid: "developers"
+#     password: ""
+#     home_directory: ""
+#     groupname: "docker"
+#     comment: "John Developer"
+#   - username: ""
+#     uid: ""
+#     gid: ""
+#     password: "MySecret123"
+#     home_directory: "/opt/customuser"
+#     shell: "/bin/zsh"
+#   - username: "alice"
+#     uid: ""
+#     gid: "admins"
+#     password: ""
+#     home_directory: ""
+#     groupname: "wheel"
+
 
