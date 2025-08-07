@@ -1,47 +1,17 @@
-# ---
-# - name: Create user group
-#   ansible.builtin.group:
-#     name: "{{ user_group }}"
-#     gid: "{{ user_gid }}"
-#     state: present
-
-# - name: Create user
-#   ansible.builtin.user:
-#     name: "{{ username }}"
-#     group: "{{ user_group }}"
-#     uid: "{{ user_uid }}"
-#     home: "{{ user_home }}"
-#     password: "{{ user_password | password_hash('sha512') }}"
-#     shell: /bin/bash
-#     create_home: yes
-#     state: present
-
-# - name: Add user to sudo group
-#   ansible.builtin.user:
-#     name: "{{ username }}"
-#     groups: sudo,wheel
-#     append: yes
-#   when: user_sudo | default(false)
-
-# - name: Set up SSH directory for user
-#   ansible.builtin.file:
-#     path: "{{ user_home }}/.ssh"
-#     state: directory
-#     owner: "{{ username }}"
-#     group: "{{ user_group }}"
-#     mode: '0700'
-
-# - name: Display user creation result
-#   ansible.builtin.debug:
-#     msg: "User {{ username }} created successfully with UID {{ user_uid }}"
-
 ---
+- name: "Parse user_yml if provided"
+  ansible.builtin.set_fact:
+    users: "{{ user_yml | from_yaml if user_yml is defined and user_yml != '' else users }}"
+  when: user_yml is defined
+
 - name: "Create groups that don't exist"
   ansible.builtin.group:
     name: "{{ item }}"
     state: present
   loop: "{{ users | selectattr('gid', 'defined') | selectattr('gid', '!=', '') | map(attribute='gid') | list | unique }}"
-  when: item != default_group
+  when: 
+    - users | length > 0
+    - item != default_group
 
 - name: "Generate random values for empty fields"
   ansible.builtin.set_fact:
@@ -59,6 +29,7 @@
       groups: "{{ item.groupname if (item.groupname is defined and item.groupname != '') else omit }}"
       comment: "{{ item.comment | default('Managed by Ansible') }}"
   loop: "{{ users }}"
+  when: users | length > 0
 
 - name: "Create users"
   ansible.builtin.user:
@@ -73,6 +44,7 @@
     comment: "{{ item.comment }}"
     state: present
   loop: "{{ processed_users }}"
+  when: processed_users is defined and processed_users | length > 0
 
 - name: "Set home directory permissions"
   ansible.builtin.file:
@@ -82,11 +54,14 @@
     mode: '0755'
     state: directory
   loop: "{{ processed_users }}"
-  when: create_home | bool
+  when: 
+    - create_home | bool
+    - processed_users is defined and processed_users | length > 0
   
 - name: "Display user creation report"
   ansible.builtin.debug:
     msg:
       - "=== User Creation Report ==="
       - "Total users created: {{ processed_users | length }}"
-      - "{% for user in processed_users %}User: {{ user.name }} | UID: {{ user.uid }} | Group: {{ user.group }} PW: {{ item.password }} | Home: {{ user.home }}{% endfor %}"
+      - "{% for user in processed_users %}User: {{ user.name }} | UID: {{ user.uid }} | Group: {{ user.group }} | PW: {{ user.password }} | Home: {{ user.home }}{% endfor %}"
+  when: processed_users is defined and processed_users | length > 0
