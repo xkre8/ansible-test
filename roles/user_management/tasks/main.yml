@@ -1,17 +1,22 @@
-
 ---
-- name: "Create groups that don't exist"
+- name: "Create groups from gid field"
   ansible.builtin.group:
     name: "{{ item }}"
     state: present
   loop: "{{ users | selectattr('gid', 'defined') | selectattr('gid', '!=', '') | map(attribute='gid') | list | unique }}"
   when: item != default_group
 
+- name: "Create groups from groupname field"
+  ansible.builtin.group:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ users | selectattr('groupname', 'defined') | selectattr('groupname', '!=', '') | map(attribute='groupname') | list | unique }}"
+
 - name: "Generate random values for empty fields"
   ansible.builtin.set_fact:
     processed_users: "{{ processed_users | default([]) + [processed_user] }}"
   vars:
-    random_username: "user_{{ 999999 | random }}"
+    random_username: "user_{{ ansible_date_time.epoch }}_{{ 999999 | random }}"
     final_username: "{{ item.username if (item.username is defined and item.username != '') else random_username }}"
     processed_user:
       name: "{{ final_username }}"
@@ -53,4 +58,4 @@
     msg:
       - "=== User Creation Report ==="
       - "Total users created: {{ processed_users | length }}"
-      - "{% for user in processed_users %}User: {{ user.name }} | UID: {{ user.uid }} | Group: {{ user.group }} PW: {{ item.password }} | Home: {{ user.home }}{% endfor %}"
+      - "{% for user in processed_users %}User: {{ user.name }} | UID: {{ user.uid }} | Group: {{ user.group }} | PW: {{ user.password }} | Home: {{ user.home }}{% endfor %}"
