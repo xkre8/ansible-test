@@ -9,8 +9,6 @@
 
 ---
 users: []
-# user_yml can be provided as YAML string variable
-user_yml: ""
 default_shell: "/bin/bash"
 default_group: "users"
 create_home: true
