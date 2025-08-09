@@ -1,6 +1,3 @@
----
-# tasks/main.yml
-# Parse survey input
 - name: Parse filesystem configuration
   ansible.builtin.set_fact:
     parsed_filesystems: "{{ filesystem_config | from_yaml }}"
@@ -63,9 +60,24 @@
   register: disk_stat
   when: lvm_device is defined and lvm_device != ""
 
-- name: Fail if selected disk does not exist
+- name: Show available disks when selected disk not found
+  ansible.builtin.command: lsblk -l
+  register: lsblk_list
+  changed_when: false
+  when:
+    - lvm_device is defined 
+    - lvm_device != ""
+    - not disk_stat.stat.exists
+
+- name: Display available disks and fail
   ansible.builtin.fail:
-    msg: "Selected disk {{ lvm_device }} does not exist. Please check available disks with 'lsblk' command."
+    msg: |
+      ❌ Selected disk {{ lvm_device }} does not exist!
+      
+      📋 Available disks:
+      {{ lsblk_list.stdout }}
+      
+      Please select from the available disks above.
   when:
     - lvm_device is defined 
     - lvm_device != ""
@@ -126,7 +138,43 @@
     - volume_group_name is defined
     - volume_group_name != ""
 
-# Create Logical Volumes
+# Create Logical Volumes with size validation
+- name: Get Volume Group size information
+  ansible.builtin.command: vgs --noheadings --units m "{{ volume_group_name }}" -o vg_size,vg_free
+  register: vg_size_info
+  changed_when: false
+  when: 
+    - volume_group_name is defined
+    - volume_group_name != ""
+    - filesystem_dirs | length > 0
+
+- name: Parse VG size information
+  ansible.builtin.set_fact:
+    vg_total_size: "{{ vg_size_info.stdout.split()[0] | regex_replace('m', '') | int }}"
+    vg_free_size: "{{ vg_size_info.stdout.split()[1] | regex_replace('m', '') | int }}"
+  when: vg_size_info is defined and vg_size_info.stdout is defined
+
+- name: Calculate total requested size
+  ansible.builtin.set_fact:
+    total_requested_size: "{{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) | map(attribute='size_mb') | map('int') | sum }}"
+
+- name: Check if requested size exceeds available space
+  ansible.builtin.fail:
+    msg: |
+      ❌ Insufficient space in Volume Group {{ volume_group_name }}!
+      
+      📊 Volume Group Information:
+      - Total Size: {{ vg_total_size }}MB
+      - Free Space: {{ vg_free_size }}MB
+      - Requested Size: {{ total_requested_size }}MB
+      - Space Needed: {{ (total_requested_size | int) - (vg_free_size | int) }}MB more
+      
+      Please reduce the size_mb values or extend the volume group.
+  when:
+    - vg_free_size is defined
+    - total_requested_size is defined
+    - (total_requested_size | int) > (vg_free_size | int)
+
 - name: Create Logical Volumes
   community.general.lvol:
     vg: "{{ volume_group_name }}"
@@ -180,9 +228,54 @@
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
 
-# Verify mounted filesystems
-- name: Display mounted filesystems
+# Final Summary Debug - Show PV, VG, LV information
+- name: Get Physical Volume information
+  ansible.builtin.command: pvs --noheadings "{{ lvm_device }}" -o pv_name,vg_name,pv_size,pv_free
+  register: pv_info
+  changed_when: false
+  failed_when: false
+  when: lvm_device is defined and lvm_device != ""
+
+- name: Get Volume Group detailed information  
+  ansible.builtin.command: vgs --noheadings "{{ volume_group_name }}" -o vg_name,pv_count,lv_count,vg_size,vg_free
+  register: vg_detailed_info
+  changed_when: false
+  failed_when: false
+  when: volume_group_name is defined and volume_group_name != ""
+
+- name: Get Logical Volume information
+  ansible.builtin.command: lvs --noheadings "{{ volume_group_name }}" -o lv_name,lv_size,lv_path
+  register: lv_info
+  changed_when: false
+  failed_when: false
+  when: volume_group_name is defined and volume_group_name != ""
+
+- name: Display comprehensive LVM summary
   ansible.builtin.debug:
-    msg: "{{ item.lv_name }} mounted at {{ item.path }} ({{ item.size_mb }}MB) on disk {{ lvm_device }}"
-  loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(false)
+    msg: |
+      
+      🎯 ===== LVM SETUP SUMMARY =====
+      
+      📀 Physical Volume (PV):
+      {{ pv_info.stdout if pv_info.stdout is defined else 'No PV information available' }}
+      
+      📦 Volume Group (VG):
+      {{ vg_detailed_info.stdout if vg_detailed_info.stdout is defined else 'No VG information available' }}
+      
+      💾 Logical Volumes (LV):
+      {% if lv_info.stdout_lines is defined %}
+      {% for lv in lv_info.stdout_lines %}
+      {{ lv }}
+      {% endfor %}
+      {% else %}
+      No LV information available
+      {% endif %}
+      
+      🗂️  Mounted Filesystems:
+      {% for item in filesystem_dirs %}
+      {% if item.create_lvm | default(false) %}
+      - {{ item.lv_name }}: {{ item.path }} ({{ item.size_mb }}MB, {{ item.fstype }})
+      {% endif %}
+      {% endfor %}
+      
+      ✅ LVM setup completed successfully!
