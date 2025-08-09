@@ -1,5 +1,59 @@
 ---
-# tasks/main.yml
+# Disk Discovery and Validation
+- name: Discover available disks
+  block:
+    - name: Get detailed disk information
+      ansible.builtin.shell: |
+        lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE | jq -r '
+        .blockdevices[] | 
+        select(.type=="disk") | 
+        select(.mountpoint==null or .mountpoint=="") |
+        select(.fstype==null or .fstype=="") |
+        "\(.name):\(.size)"'
+      register: disk_info
+      changed_when: false
+      failed_when: false
+
+    - name: Show available disks
+      ansible.builtin.debug:
+        msg: |
+          Available disks for LVM:
+          {% for disk in disk_info.stdout_lines %}
+          - {{ disk }}
+          {% endfor %}
+          
+          Selected disk will be: {{ selected_disk_name if selected_disk_name is defined else 'manual path' }}
+      when: disk_info.stdout_lines is defined
+
+    - name: Check if selected disk exists
+      ansible.builtin.stat:
+        path: "/dev/{{ selected_disk_name }}"
+      register: selected_disk_stat
+      when: selected_disk_name is defined and selected_disk_name != ""
+
+    - name: Validate selected disk
+      ansible.builtin.fail:
+        msg: "Selected disk /dev/{{ selected_disk_name }} does not exist or is not accessible"
+      when: 
+        - selected_disk_name is defined
+        - selected_disk_name != ""
+        - selected_disk_stat is defined
+        - not selected_disk_stat.stat.exists
+
+    - name: Set final lvm_device from survey selection
+      ansible.builtin.set_fact:
+        lvm_device: "{{ manual_lvm_device if (manual_lvm_device is defined and manual_lvm_device != '') else '/dev/' + selected_disk_name }}"
+      when: selected_disk_name is defined or manual_lvm_device is defined
+
+    - name: Display final LVM device
+      ansible.builtin.debug:
+        msg: "Using LVM device: {{ lvm_device }}"
+      when: lvm_device is defined
+
+  when: 
+    - auto_discover_disks | default(true)
+    - (lvm_device is not defined or lvm_device == "")
+
 # Parse survey input
 - name: Parse filesystem configuration
   ansible.builtin.set_fact:
