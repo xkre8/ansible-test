@@ -1,63 +1,5 @@
-# ---
-# - name: Install LVM packages
-#   ansible.builtin.package:
-#     name: lvm2
-#     state: present
-
-# - name: Create Physical Volume
-#   community.general.lvg:
-#     vg: "{{ volume_group_name }}"
-#     pvs: "{{ lvm_device }}"
-#     state: present
-
-# - name: Create Logical Volumes
-#   community.general.lvol:
-#     vg: "{{ volume_group_name }}"
-#     lv: "{{ item.lv_name | default(item.path | basename) }}"
-#     size: "{{ item.size_mb }}m"
-#     state: present
-#   loop: "{{ filesystem_dirs }}"
-#   when: item.create_lvm | default(false)
-
-# - name: Create filesystems
-#   community.general.filesystem:
-#     fstype: "{{ item.fstype | default('xfs') }}"
-#     dev: "/dev/{{ volume_group_name }}/{{ item.lv_name | default(item.path | basename) }}"
-#     state: present
-#   loop: "{{ filesystem_dirs }}"
-#   when: item.create_lvm | default(false)
-
-# - name: Create mount directories
-#   ansible.builtin.file:
-#     path: "{{ item.path }}"
-#     state: directory
-#     owner: "{{ item.owner | default('root') }}"
-#     group: "{{ item.group | default('root') }}"
-#     mode: "{{ item.mode | default('0755') }}"
-#   loop: "{{ filesystem_dirs }}"
-
-# - name: Mount filesystems
-#   ansible.posix.mount:
-#     path: "{{ item.path }}"
-#     src: "/dev/{{ volume_group_name }}/{{ item.lv_name | default(item.path | basename) }}"
-#     fstype: "{{ item.fstype | default('xfs') }}"
-#     opts: "{{ item.mount_opts | default('defaults') }}"
-#     state: mounted
-#   loop: "{{ filesystem_dirs }}"
-#   when: item.create_lvm | default(false)
-
-# - name: Add to /etc/fstab
-#   ansible.posix.mount:
-#     path: "{{ item.path }}"
-#     src: "/dev/{{ volume_group_name }}/{{ item.lv_name | default(item.path | basename) }}"
-#     fstype: "{{ item.fstype | default('xfs') }}"
-#     opts: "{{ item.mount_opts | default('defaults') }}"
-#     state: present
-#   loop: "{{ filesystem_dirs }}"
-#   when: item.create_lvm | default(false)
-
 ---
-# Parse survey input
+# Parse survey input → คงเหมือนเดิม แต่เพิ่ม vg_name เข้าไปใน item
 - name: Parse filesystem configuration
   ansible.builtin.set_fact:
     parsed_filesystems: "{{ filesystem_config | from_yaml }}"
@@ -73,6 +15,7 @@
   vars:
     item:
       path: "{{ fs.path }}"
+      vg_name: "{{ fs.vg_name }}"           # <<-- เพิ่มบรรทัดนี้
       lv_name: "{{ fs.lv_name }}"
       owner: "{{ fs.owner | default('root') }}"
       group: "{{ fs.group | default('root') }}"
@@ -92,36 +35,76 @@
     name: lvm2
     state: present
 
-# Create Volume Group with Physical Volume
-- name: Create Volume Group and Physical Volume
-  community.general.lvg:
-    vg: "{{ volume_group_name }}"
-    pvs: "{{ lvm_device }}"
-    state: present
-  when: 
-    - lvm_device is defined 
-    - lvm_device != ""
-    - volume_group_name is defined
-    - volume_group_name != ""
+# ------------------------------------------------------------
+# NEW: Discover existing VGs (ชื่อ, ขนาดรวม, พื้นที่ว่าง)
+# ------------------------------------------------------------
+- name: Query existing VGs in JSON
+  ansible.builtin.command: >
+    vgs --reportformat json --units m --nosuffix
+    -o vg_name,vg_size,vg_free
+  register: vgs_raw
+  changed_when: false
 
-# Create Logical Volumes
+- name: Parse VGs JSON
+  ansible.builtin.set_fact:
+    vgs_list: "{{ (vgs_raw.stdout | from_json).report[0].vg | default([]) }}"
+
+- name: Build VG dict (by name)
+  ansible.builtin.set_fact:
+    vgs_by_name: >-
+      {{
+        vgs_by_name | default({}) | combine({
+          item.vg_name: {
+            'size_mb': (item.vg_size | float),
+            'free_mb': (item.vg_free | float)
+          }
+        })
+      }}
+  loop: "{{ vgs_list }}"
+
+# แสดงรายการ VG ที่พบ
+- name: Show VGs and capacities
+  ansible.builtin.debug:
+    msg: >-
+      Found VG {{ item.key }}: size={{ item.value.size_mb|int }}MB,
+      free={{ item.value.free_mb|int }}MB
+  loop: "{{ vgs_by_name | dict2items }}"
+
+# ------------------------------------------------------------
+# PRECHECK: ตรวจสอบว่าแต่ละ LV ไม่เกิน free ของ VG
+# ถ้าเกิน -> debug แล้วหยุด playbook
+# ------------------------------------------------------------
+- name: Validate LV sizes against VG free space
+  ansible.builtin.assert:
+    that:
+      - item.vg_name is defined
+      - vgs_by_name[item.vg_name] is defined
+      - (item.size_mb | int) <= (vgs_by_name[item.vg_name].free_mb | int)
+    fail_msg: >-
+      [INSUFFICIENT VG FREE] LV {{ item.lv_name }} needs {{ item.size_mb }}MB
+      but VG {{ item.vg_name }} has only {{ (vgs_by_name[item.vg_name].free_mb | int) if (item.vg_name in vgs_by_name) else 'N/A' }}MB free.
+    success_msg: >-
+      [OK] LV {{ item.lv_name }} will use {{ item.size_mb }}MB on VG {{ item.vg_name }}
+  loop: "{{ filesystem_dirs }}"
+  when: item.create_lvm | default(false)
+
+# ------------------------------------------------------------
+# Create Logical Volumes (ใช้ VG ตามรายการ)
+# ------------------------------------------------------------
 - name: Create Logical Volumes
   community.general.lvol:
-    vg: "{{ volume_group_name }}"
+    vg: "{{ item.vg_name }}"
     lv: "{{ item.lv_name }}"
     size: "{{ item.size_mb }}m"
     state: present
   loop: "{{ filesystem_dirs }}"
-  when: 
-    - item.create_lvm | default(false)
-    - volume_group_name is defined
-    - volume_group_name != ""
+  when: item.create_lvm | default(false)
 
 # Create filesystems
 - name: Create filesystems on Logical Volumes
   community.general.filesystem:
     fstype: "{{ item.fstype | default('xfs') }}"
-    dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    dev: "/dev/{{ item.vg_name }}/{{ item.lv_name }}"
     force: no
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
@@ -140,27 +123,27 @@
 - name: Mount filesystems
   ansible.posix.mount:
     path: "{{ item.path }}"
-    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    src: "/dev/{{ item.vg_name }}/{{ item.lv_name }}"
     fstype: "{{ item.fstype | default('xfs') }}"
     opts: "{{ item.mount_opts | default('defaults') }}"
     state: mounted
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
 
-# Add to fstab for persistent mounting
+# Add to fstab
 - name: Add filesystems to /etc/fstab
   ansible.posix.mount:
     path: "{{ item.path }}"
-    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    src: "/dev/{{ item.vg_name }}/{{ item.lv_name }}"
     fstype: "{{ item.fstype | default('xfs') }}"
     opts: "{{ item.mount_opts | default('defaults') }}"
     state: present
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
 
-# Verify mounted filesystems
+# Verify
 - name: Display mounted filesystems
   ansible.builtin.debug:
-    msg: "{{ item.lv_name }} mounted at {{ item.path }} ({{ item.size_mb }}MB)"
+    msg: "{{ item.lv_name }} mounted at {{ item.path }} ({{ item.size_mb }}MB) on VG {{ item.vg_name }}"
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)

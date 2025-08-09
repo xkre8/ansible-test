@@ -53,16 +53,16 @@
 #     fstype: "xfs"
 #     mount_opts: "defaults"
 
-#   - path: "/mdw_app_deploy"
-#     lv_name: "mdw_app_deploy"
-#     owner: "root"
-#     group: "root"
-#     mode: "0755"
-#     create_lvm: true
-#     size_mb: 1024
-#     fstype: "xfs"
-#     mount_opts: "defaults"
-
+  # - path: "/mdw_app_deploy"
+  #   lv_name: "mdw_app_deploy"
+  #   owner: "root"
+  #   group: "root"
+  #   mode: "0755"
+  #   create_lvm: true
+  #   size_mb: 1024
+  #   fstype: "xfs"
+  #   mount_opts: "defaults"
+  
 lvm_device: ""
 volume_group_name: ""
 filesystem_dirs: []
