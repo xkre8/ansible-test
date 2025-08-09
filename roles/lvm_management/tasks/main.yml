@@ -35,49 +35,69 @@
     name: lvm2
     state: present
 
-# Auto-discover available disks if lvm_device is not specified
-- block:
-    - name: Get all block devices information
-      ansible.builtin.command: lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE
-      register: lsblk_output
-      changed_when: false
 
-    - name: Parse lsblk output
-      ansible.builtin.set_fact:
-        block_devices: "{{ (lsblk_output.stdout | from_json).blockdevices }}"
 
-    - name: Filter available disks (not mounted, no filesystem, minimum size)
-      ansible.builtin.set_fact:
-        available_disks: "{{ available_disks | default([]) + [item] }}"
-      loop: "{{ block_devices }}"
-      when:
-        - item.type == "disk"
-        - item.mountpoint is none or item.mountpoint == ""
-        - item.fstype is none or item.fstype == ""
-        - item.size | regex_replace('[^0-9.]', '') | float >= min_disk_size_gb
-        - not item.name in ansible_mounts | map(attribute='device') | map('basename')
+# Disk discovery and validation
+- name: Set lvm_device from survey input
+  ansible.builtin.set_fact:
+    lvm_device: "{{ manual_lvm_device if (manual_lvm_device is defined and manual_lvm_device != '') else '/dev/' + selected_disk_name if (selected_disk_name is defined and selected_disk_name != '') else lvm_device }}"
 
-    - name: Display available disks
-      ansible.builtin.debug:
-        msg: "Available disks: {{ available_disks | map(attribute='name') | join(', ') }}"
-      when: available_disks is defined and available_disks | length > 0
+- name: Get available disks information for validation
+  ansible.builtin.command: lsblk -n -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE
+  register: available_disks_info  
+  changed_when: false
+  when: lvm_device is defined and lvm_device != ""
 
-    - name: Fail if no available disks found
-      ansible.builtin.fail:
-        msg: "No available disks found that meet the criteria (unpartitioned, unmounted, >= {{ min_disk_size_gb }}GB)"
-      when: available_disks is not defined or available_disks | length == 0
+- name: Display available disks for reference
+  ansible.builtin.debug:
+    msg: |
+      Available block devices:
+      {{ available_disks_info.stdout }}
+      
+      Selected LVM device: {{ lvm_device }}
+  when: available_disks_info is defined
 
-    - name: Set lvm_device if auto-discovery is enabled and device not specified
-      ansible.builtin.set_fact:
-        lvm_device: "/dev/{{ selected_disk_name }}"
-      when: 
-        - selected_disk_name is defined
-        - selected_disk_name != ""
+- name: Validate selected disk exists
+  ansible.builtin.stat:
+    path: "{{ lvm_device }}"
+  register: disk_stat
+  when: lvm_device is defined and lvm_device != ""
 
+- name: Fail if selected disk does not exist
+  ansible.builtin.fail:
+    msg: "Selected disk {{ lvm_device }} does not exist. Please check available disks with 'lsblk' command."
+  when:
+    - lvm_device is defined 
+    - lvm_device != ""
+    - not disk_stat.stat.exists
+
+- name: Check if disk is already in use
+  ansible.builtin.shell: |
+    if pvdisplay {{ lvm_device }} 2>/dev/null; then
+      echo "pv_exists"
+    elif lsblk -n {{ lvm_device }} | grep -q part; then  
+      echo "has_partitions"
+    elif lsblk -n {{ lvm_device }} | awk '{print $7}' | grep -q '/'; then
+      echo "mounted"
+    else
+      echo "available"
+    fi
+  register: disk_status
+  changed_when: false
+  failed_when: false
+  when: lvm_device is defined and lvm_device != ""
+
+- name: Display disk status
+  ansible.builtin.debug:
+    msg: "Disk {{ lvm_device }} status: {{ disk_status.stdout }}"
+  when: disk_status is defined
+
+- name: Warning if disk already has PV
+  ansible.builtin.debug:
+    msg: "WARNING: {{ lvm_device }} already has a Physical Volume. Will proceed to use existing PV."
   when: 
-    - auto_discover_disks | default(true)
-    - (lvm_device is not defined or lvm_device == "")
-    - selected_disk_name is defined
+    - disk_status is defined
+    - disk_status.stdout == "pv_exists"
 
 # Check if Volume Group already exists
 - name: Check if Volume Group exists
