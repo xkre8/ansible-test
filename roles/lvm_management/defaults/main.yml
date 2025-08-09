@@ -62,7 +62,10 @@
   #   size_mb: 1024
   #   fstype: "xfs"
   #   mount_opts: "defaults"
-  
+
+---
 lvm_device: ""
 volume_group_name: ""
 filesystem_dirs: []
+auto_discover_disks: true
+min_disk_size_gb: 1  

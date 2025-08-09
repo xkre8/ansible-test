@@ -1,5 +1,6 @@
 ---
-# Parse survey input → คงเหมือนเดิม แต่เพิ่ม vg_name เข้าไปใน item
+# tasks/main.yml
+# Parse survey input
 - name: Parse filesystem configuration
   ansible.builtin.set_fact:
     parsed_filesystems: "{{ filesystem_config | from_yaml }}"
@@ -15,7 +16,6 @@
   vars:
     item:
       path: "{{ fs.path }}"
-      vg_name: "{{ fs.vg_name }}"           # <<-- เพิ่มบรรทัดนี้
       lv_name: "{{ fs.lv_name }}"
       owner: "{{ fs.owner | default('root') }}"
       group: "{{ fs.group | default('root') }}"
@@ -35,76 +35,80 @@
     name: lvm2
     state: present
 
-# ------------------------------------------------------------
-# NEW: Discover existing VGs (ชื่อ, ขนาดรวม, พื้นที่ว่าง)
-# ------------------------------------------------------------
-- name: Query existing VGs in JSON
-  ansible.builtin.command: >
-    vgs --reportformat json --units m --nosuffix
-    -o vg_name,vg_size,vg_free
-  register: vgs_raw
-  changed_when: false
+# Auto-discover available disks if lvm_device is not specified
+- block:
+    - name: Get all block devices information
+      ansible.builtin.command: lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE
+      register: lsblk_output
+      changed_when: false
 
-- name: Parse VGs JSON
-  ansible.builtin.set_fact:
-    vgs_list: "{{ (vgs_raw.stdout | from_json).report[0].vg | default([]) }}"
+    - name: Parse lsblk output
+      ansible.builtin.set_fact:
+        block_devices: "{{ (lsblk_output.stdout | from_json).blockdevices }}"
 
-- name: Build VG dict (by name)
-  ansible.builtin.set_fact:
-    vgs_by_name: >-
-      {{
-        vgs_by_name | default({}) | combine({
-          item.vg_name: {
-            'size_mb': (item.vg_size | float),
-            'free_mb': (item.vg_free | float)
-          }
-        })
-      }}
-  loop: "{{ vgs_list }}"
+    - name: Filter available disks (not mounted, no filesystem, minimum size)
+      ansible.builtin.set_fact:
+        available_disks: "{{ available_disks | default([]) + [item] }}"
+      loop: "{{ block_devices }}"
+      when:
+        - item.type == "disk"
+        - item.mountpoint is none or item.mountpoint == ""
+        - item.fstype is none or item.fstype == ""
+        - item.size | regex_replace('[^0-9.]', '') | float >= min_disk_size_gb
+        - not item.name in ansible_mounts | map(attribute='device') | map('basename')
 
-# แสดงรายการ VG ที่พบ
-- name: Show VGs and capacities
-  ansible.builtin.debug:
-    msg: >-
-      Found VG {{ item.key }}: size={{ item.value.size_mb|int }}MB,
-      free={{ item.value.free_mb|int }}MB
-  loop: "{{ vgs_by_name | dict2items }}"
+    - name: Display available disks
+      ansible.builtin.debug:
+        msg: "Available disks: {{ available_disks | map(attribute='name') | join(', ') }}"
+      when: available_disks is defined and available_disks | length > 0
 
-# ------------------------------------------------------------
-# PRECHECK: ตรวจสอบว่าแต่ละ LV ไม่เกิน free ของ VG
-# ถ้าเกิน -> debug แล้วหยุด playbook
-# ------------------------------------------------------------
-- name: Validate LV sizes against VG free space
-  ansible.builtin.assert:
-    that:
-      - item.vg_name is defined
-      - vgs_by_name[item.vg_name] is defined
-      - (item.size_mb | int) <= (vgs_by_name[item.vg_name].free_mb | int)
-    fail_msg: >-
-      [INSUFFICIENT VG FREE] LV {{ item.lv_name }} needs {{ item.size_mb }}MB
-      but VG {{ item.vg_name }} has only {{ (vgs_by_name[item.vg_name].free_mb | int) if (item.vg_name in vgs_by_name) else 'N/A' }}MB free.
-    success_msg: >-
-      [OK] LV {{ item.lv_name }} will use {{ item.size_mb }}MB on VG {{ item.vg_name }}
-  loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(false)
+    - name: Fail if no available disks found
+      ansible.builtin.fail:
+        msg: "No available disks found that meet the criteria (unpartitioned, unmounted, >= {{ min_disk_size_gb }}GB)"
+      when: available_disks is not defined or available_disks | length == 0
 
-# ------------------------------------------------------------
-# Create Logical Volumes (ใช้ VG ตามรายการ)
-# ------------------------------------------------------------
+    - name: Set lvm_device if auto-discovery is enabled and device not specified
+      ansible.builtin.set_fact:
+        lvm_device: "/dev/{{ selected_disk_name }}"
+      when: 
+        - selected_disk_name is defined
+        - selected_disk_name != ""
+
+  when: 
+    - auto_discover_disks | default(true)
+    - (lvm_device is not defined or lvm_device == "")
+    - selected_disk_name is defined
+
+# Create Volume Group with Physical Volume
+- name: Create Physical Volume
+  community.general.lvg:
+    vg: "{{ volume_group_name }}"
+    pvs: "{{ lvm_device }}"
+    state: present
+  when: 
+    - lvm_device is defined 
+    - lvm_device != ""
+    - volume_group_name is defined
+    - volume_group_name != ""
+
+# Create Logical Volumes
 - name: Create Logical Volumes
   community.general.lvol:
-    vg: "{{ item.vg_name }}"
+    vg: "{{ volume_group_name }}"
     lv: "{{ item.lv_name }}"
     size: "{{ item.size_mb }}m"
     state: present
   loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(false)
+  when: 
+    - item.create_lvm | default(false)
+    - volume_group_name is defined
+    - volume_group_name != ""
 
 # Create filesystems
 - name: Create filesystems on Logical Volumes
   community.general.filesystem:
     fstype: "{{ item.fstype | default('xfs') }}"
-    dev: "/dev/{{ item.vg_name }}/{{ item.lv_name }}"
+    dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
     force: no
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
@@ -123,27 +127,27 @@
 - name: Mount filesystems
   ansible.posix.mount:
     path: "{{ item.path }}"
-    src: "/dev/{{ item.vg_name }}/{{ item.lv_name }}"
+    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
     fstype: "{{ item.fstype | default('xfs') }}"
     opts: "{{ item.mount_opts | default('defaults') }}"
     state: mounted
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
 
-# Add to fstab
+# Add to fstab for persistent mounting
 - name: Add filesystems to /etc/fstab
   ansible.posix.mount:
     path: "{{ item.path }}"
-    src: "/dev/{{ item.vg_name }}/{{ item.lv_name }}"
+    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
     fstype: "{{ item.fstype | default('xfs') }}"
     opts: "{{ item.mount_opts | default('defaults') }}"
     state: present
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
 
-# Verify
+# Verify mounted filesystems
 - name: Display mounted filesystems
   ansible.builtin.debug:
-    msg: "{{ item.lv_name }} mounted at {{ item.path }} ({{ item.size_mb }}MB) on VG {{ item.vg_name }}"
+    msg: "{{ item.lv_name }} mounted at {{ item.path }} ({{ item.size_mb }}MB) on disk {{ lvm_device }}"
   loop: "{{ filesystem_dirs }}"
   when: item.create_lvm | default(false)
