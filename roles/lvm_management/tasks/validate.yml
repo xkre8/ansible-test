@@ -1,80 +1,38 @@
----
-- name: Install required packages
-  ansible.builtin.package:
-    name: lvm2
-    state: present
+# ❌ โค้ดที่ผิด (น่าจะมีแฝงอยู่)
+- name: Auto-discover available disk
+  ansible.builtin.shell: |
+    lsblk -ndo NAME,TYPE | awk '$2=="disk" && !/^(loop|sr)/ {print "/dev/"$1; exit}'
+  register: discovered_disk
+  changed_when: false
+  when: lvm_device == ""
 
-- name: Parse filesystem configuration
+- name: Set LVM device from discovery
   ansible.builtin.set_fact:
-    parsed_filesystems: "{{ filesystem_config | from_yaml }}"
+    lvm_device: "{{ discovered_disk.stdout | trim }}"
+  when: discovered_disk.stdout != ""  # ← ปัญหาตรงนี้
+
+# ✅ โค้ดที่ถูกต้อง
+- name: Auto-discover available disk
+  ansible.builtin.shell: |
+    lsblk -ndo NAME,TYPE | awk '$2=="disk" && !/^(loop|sr)/ {print "/dev/"$1; exit}'
+  register: discovered_disk_result
+  changed_when: false
+  failed_when: false
+  when: lvm_device == ""
+
+- name: Set LVM device from discovery
+  ansible.builtin.set_fact:
+    lvm_device: "{{ discovered_disk_result.stdout | trim }}"
   when: 
-    - filesystem_config is defined 
-    - filesystem_config | length > 0
+    - discovered_disk_result is defined
+    - discovered_disk_result.stdout is defined
+    - discovered_disk_result.stdout != ""
+    - lvm_device == ""
 
-- name: Initialize filesystem_dirs
+# หรือแบบปลอดภัยกว่า
+- name: Set LVM device from discovery (Safe)
   ansible.builtin.set_fact:
-    filesystem_dirs: []
-
-- name: Build filesystem configuration
-  ansible.builtin.set_fact:
-    filesystem_dirs: "{{ filesystem_dirs + [item] }}"
-  vars:
-    item:
-      path: "{{ fs.path }}"
-      lv_name: "{{ fs.lv_name }}"
-      owner: "{{ fs.owner | default(default_owner) }}"
-      group: "{{ fs.group | default(default_group) }}"
-      mode: "{{ fs.mode | default(default_mode) }}"
-      create_lvm: "{{ fs.create_lvm | default(true) }}"
-      size_mb: "{{ fs.size_mb }}"
-      fstype: "{{ fs.fstype | default(default_fstype) }}"
-      mount_opts: "{{ fs.mount_opts | default(default_mount_opts) }}"
-  loop: "{{ parsed_filesystems | default([]) }}"
-  loop_control:
-    loop_var: fs
-
-- name: Debug variables before processing
-  ansible.builtin.debug:
-    msg: |
-      DEBUG Variables:
-      - manual_lvm_device: {{ manual_lvm_device | default('NOT_DEFINED') }}
-      - selected_disk_name: {{ selected_disk_name | default('NOT_DEFINED') }}
-      - lvm_device: {{ lvm_device | default('NOT_DEFINED') }}
-      - use_existing_vg: {{ use_existing_vg | default('NOT_DEFINED') }}
-      - existing_vg_name: {{ existing_vg_name | default('NOT_DEFINED') }}
-
-- name: Determine LVM device path
-  ansible.builtin.set_fact:
-    lvm_device: >-
-      {{ 
-        manual_lvm_device if (manual_lvm_device is defined and manual_lvm_device != '') 
-        else ('/dev/' + selected_disk_name) if (selected_disk_name is defined and selected_disk_name != '') 
-        else lvm_device 
-      }}
-
-- name: Determine VG action and name
-  ansible.builtin.set_fact:
-    vg_action: "{{ 'use_existing' if (use_existing_vg | default(false) | bool) else vg_action }}"
-    volume_group_name: "{{ existing_vg_name if (use_existing_vg | default(false) | bool and existing_vg_name != '') else volume_group_name }}"
-
-- name: Debug final variables
-  ansible.builtin.debug:
-    msg: |
-      FINAL Variables:
-      - Volume Group Name: {{ volume_group_name }}
-      - LVM Device: {{ lvm_device }}
-      - VG Action: {{ vg_action }}
-      - Filesystem Count: {{ filesystem_dirs | length }}
-
-- name: Validate configuration
-  ansible.builtin.assert:
-    that:
-      - volume_group_name != ""
-      - filesystem_dirs | length > 0
-      - (lvm_device != "" or vg_action == "use_existing")
-    fail_msg: |
-      ❌ Configuration validation failed:
-      - Volume Group Name: {{ volume_group_name }}
-      - LVM Device: {{ lvm_device }}
-      - VG Action: {{ vg_action }}
-      - Filesystem Count: {{ filesystem_dirs | length }}
+    lvm_device: "{{ discovered_disk_result.stdout | trim }}"
+  when: 
+    - discovered_disk_result is not skipped
+    - discovered_disk_result.stdout | default('') != ""
