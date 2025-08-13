@@ -282,133 +282,31 @@
 
 
 ---
-# Parse survey input if provided
-- name: Parse filesystem configuration from survey
-  ansible.builtin.set_fact:
-    parsed_filesystems: "{{ filesystem_config | from_yaml }}"
+- name: Validate input parameters
+  ansible.builtin.include_tasks: validate.yml
+
+- name: Discover available disks
+  ansible.builtin.include_tasks: disk_discovery.yml
+  when: vg_strategy | default(vg_action) in ['create_new', 'create', 'extend_existing', 'extend']
+
+- name: Discover Volume Groups
+  ansible.builtin.include_tasks: vg_discovery.yml
+
+- name: Setup disk (if needed)
+  ansible.builtin.include_tasks: disk_setup.yml
   when: 
-    - filesystem_config is defined
-    - filesystem_config != ""
+    - vg_action in ['create', 'extend']
+    - lvm_device is defined
+    - lvm_device != ""
+    - lvm_device != "/dev/"
 
-- name: Build filesystem configuration
-  ansible.builtin.set_fact:
-    filesystem_dirs: "{{ parsed_filesystems if parsed_filesystems is defined else filesystem_dirs }}"
+- name: Setup LVM
+  ansible.builtin.include_tasks: lvm_setup.yml
+  when: volume_group_name != ""
 
-# Install LVM packages
-- name: Install LVM packages
-  ansible.builtin.package:
-    name: lvm2
-    state: present
+- name: Setup filesystems
+  ansible.builtin.include_tasks: filesystem_setup.yml
+  when: filesystem_dirs | length > 0
 
-# Auto-discover disk if needed
-- name: Auto-discover available disk
-  ansible.builtin.shell: |
-    lsblk -dpno NAME,SIZE,TYPE | grep disk | grep -v sda | grep -v sdb | head -1 | awk '{print $1}'
-  register: discovered_disk
-  changed_when: false
-  when: 
-    - lvm_device == ""
-    - selected_disk_name is not defined or selected_disk_name == ""
-
-- name: Set LVM device from discovery
-  ansible.builtin.set_fact:
-    lvm_device: "{{ discovered_disk.stdout }}"
-  when: 
-    - discovered_disk is defined
-    - discovered_disk.stdout != ""
-    - lvm_device == ""
-
-- name: Set LVM device from survey selection
-  ansible.builtin.set_fact:
-    lvm_device: "/dev/{{ selected_disk_name }}"
-  when: 
-    - selected_disk_name is defined
-    - selected_disk_name != ""
-
-- name: Display selected configuration
-  ansible.builtin.debug:
-    msg:
-      - "LVM Device: {{ lvm_device | default('Not set') }}"
-      - "Volume Group: {{ volume_group_name | default('Not set') }}"
-      - "Filesystems to create: {{ filesystem_dirs | length }}"
-
-# Validate configuration
-- name: Check required variables
-  ansible.builtin.fail:
-    msg: "{{ item }} is required but not defined"
-  when: vars[item] is not defined or vars[item] == ""
-  loop:
-    - lvm_device
-    - volume_group_name
-
-- name: Check if filesystems are defined
-  ansible.builtin.fail:
-    msg: "No filesystems defined to create"
-  when: filesystem_dirs | length == 0
-
-# Create Physical Volume and Volume Group
-- name: Create Volume Group
-  community.general.lvg:
-    vg: "{{ volume_group_name }}"
-    pvs: "{{ lvm_device }}"
-    state: present
-
-# Create Logical Volumes
-- name: Create Logical Volumes
-  community.general.lvol:
-    vg: "{{ volume_group_name }}"
-    lv: "{{ item.lv_name }}"
-    size: "{{ item.size_mb }}m"
-    state: present
-  loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(true)
-
-# Create filesystems
-- name: Create filesystems
-  community.general.filesystem:
-    fstype: "{{ item.fstype | default(default_fstype) }}"
-    dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
-    force: no
-  loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(true)
-
-# Create mount directories
-- name: Create mount directories
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: directory
-    owner: "{{ item.owner | default(default_owner) }}"
-    group: "{{ item.group | default(default_group) }}"
-    mode: "{{ item.mode | default(default_mode) }}"
-  loop: "{{ filesystem_dirs }}"
-
-# Mount filesystems
-- name: Mount filesystems
-  ansible.posix.mount:
-    path: "{{ item.path }}"
-    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
-    fstype: "{{ item.fstype | default(default_fstype) }}"
-    opts: "{{ item.mount_opts | default(default_mount_opts) }}"
-    state: mounted
-  loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(true)
-
-# Add to fstab
-- name: Add to /etc/fstab
-  ansible.posix.mount:
-    path: "{{ item.path }}"
-    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
-    fstype: "{{ item.fstype | default(default_fstype) }}"
-    opts: "{{ item.mount_opts | default(default_mount_opts) }}"
-    state: present
-  loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(true)
-
-# Display summary
-- name: Display setup summary
-  ansible.builtin.debug:
-    msg:
-      - "=== LVM Setup Complete ==="
-      - "Volume Group: {{ volume_group_name }}"
-      - "Physical Volume: {{ lvm_device }}"
-      - "Created {{ filesystem_dirs | length }} logical volumes"
+- name: Display summary
+  ansible.builtin.include_tasks: summary.yml
