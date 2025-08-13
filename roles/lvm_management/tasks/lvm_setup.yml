@@ -4,17 +4,20 @@
     vg: "{{ volume_group_name }}"
     pvs: "{{ lvm_device }}"
     state: present
-  when: vg_action in ['create', 'extend']
+  when: 
+    - vg_action in ['create', 'extend']
+    - lvm_device is defined
+    - lvm_device != ""
   register: vg_result
 
 - name: Display VG operation result
   ansible.builtin.debug:
     msg: |
       📦 Volume Group Operation:
-      {% if vg_action == 'create' and vg_result.changed %}
+      {% if vg_action == 'create' and (vg_result.changed | default(false)) %}
       ✅ Created VG '{{ volume_group_name }}'
-      {% elif vg_action == 'extend' and vg_result.changed %}
-      ✅ Extended VG '{{ volume_group_name }}' with {{ lvm_device }}
+      {% elif vg_action == 'extend' and (vg_result.changed | default(false)) %}
+      ✅ Extended VG '{{ volume_group_name }}'{% if lvm_device is defined %} with {{ lvm_device }}{% endif %}
       {% elif vg_action == 'use_existing' %}
       📋 Using existing VG '{{ volume_group_name }}'
       {% else %}
@@ -26,10 +29,23 @@
   register: vg_space
   changed_when: false
 
+- name: Filter LVM filesystems
+  ansible.builtin.set_fact:
+    lvm_filesystems: "{{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) | list }}"
+
 - name: Calculate space requirements
   ansible.builtin.set_fact:
-    required_space_mb: "{{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) | map(attribute='size_mb') | map('int') | sum }}"
-    available_space_mb: "{{ vg_space.stdout.strip() | regex_replace('m', '') | int }}"
+    required_space_mb: "{{ lvm_filesystems | map(attribute='size_mb') | map('int') | sum }}"
+    available_space_mb: "{{ vg_space.stdout.strip() | regex_replace('[mM]', '') | int }}"
+
+- name: Display space calculation
+  ansible.builtin.debug:
+    msg: |
+      💾 Space Analysis:
+      LVM Filesystems: {{ lvm_filesystems | length }}
+      Required Space: {{ required_space_mb }}MB
+      Available Space: {{ available_space_mb }}MB
+      Status: {% if (required_space_mb | int) <= (available_space_mb | int) %}✅ Sufficient{% else %}❌ Insufficient{% endif %}
 
 - name: Validate space availability
   ansible.builtin.fail:
@@ -38,6 +54,11 @@
       Required: {{ required_space_mb }}MB
       Available: {{ available_space_mb }}MB
       Shortfall: {{ (required_space_mb | int) - (available_space_mb | int) }}MB
+      
+      💡 Solutions:
+      - Reduce filesystem sizes
+      - Add more disks to extend VG
+      - Use different VG with more space
   when: (required_space_mb | int) > (available_space_mb | int)
 
 - name: Create Logical Volumes
@@ -46,13 +67,13 @@
     lv: "{{ item.lv_name }}"
     size: "{{ item.size_mb }}m"
     state: present
-  loop: "{{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) }}"
+  loop: "{{ lvm_filesystems }}"
   register: lv_results
 
 - name: Display LV creation results
   ansible.builtin.debug:
     msg: |
       💾 Logical Volume Results:
-      {% for result in lv_results.results %}
-      - {{ result.item.lv_name }}: {{ result.item.size_mb }}MB {% if result.changed %}(CREATED){% else %}(EXISTS){% endif %}
+      {% for result in lv_results.results | default([]) %}
+      - {{ result.item.lv_name }}: {{ result.item.size_mb }}MB {% if result.changed | default(false) %}(CREATED){% else %}(EXISTS){% endif %}
       {% endfor %}
