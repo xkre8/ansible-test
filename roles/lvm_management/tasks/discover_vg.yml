@@ -1,16 +1,20 @@
 ---
 - name: Get list of all existing Volume Groups
-  ansible.builtin.shell: vgs --noheadings -o vg_name | tr -d ' '
+  ansible.builtin.shell: vgs --noheadings -o vg_name 2>/dev/null | tr -d ' ' || echo ""
   register: existing_vgs_list
   changed_when: false
   failed_when: false
+
+- name: Set existing VGs fact
+  ansible.builtin.set_fact:
+    available_vgs: "{{ existing_vgs_list.stdout_lines | select('length') | list }}"
 
 - name: Display available Volume Groups
   ansible.builtin.debug:
     msg: |
       📦 Available Volume Groups: 
-      {% if existing_vgs_list.stdout_lines | length > 0 %}
-      {% for vg in existing_vgs_list.stdout_lines %}
+      {% if available_vgs | length > 0 %}
+      {% for vg in available_vgs %}
       - {{ vg }}
       {% endfor %}
       {% else %}
@@ -26,29 +30,40 @@
       ❌ Volume Group '{{ volume_group_name }}' does not exist!
       
       Available Volume Groups:
-      {% for vg in existing_vgs_list.stdout_lines %}
+      {% if available_vgs | length > 0 %}
+      {% for vg in available_vgs %}
       - {{ vg }}
       {% endfor %}
+      {% else %}
+      No Volume Groups available
+      {% endif %}
       
       Please select from available VGs or choose 'create' option.
   when:
     - vg_action == "use_existing"
-    - volume_group_name not in existing_vgs_list.stdout_lines
+    - volume_group_name not in available_vgs
 
 - name: Get detailed VG information for existing VG
   ansible.builtin.command: vgs --units m "{{ volume_group_name }}" -o vg_name,pv_count,lv_count,vg_size,vg_free
   register: existing_vg_details
   changed_when: false
+  failed_when: false
   when: 
     - vg_action == "use_existing"
-    - volume_group_name in existing_vgs_list.stdout_lines
+    - volume_group_name in available_vgs
 
 - name: Display existing VG information
   ansible.builtin.debug:
     msg: |
       📦 Using existing Volume Group: {{ volume_group_name }}
+      {% if existing_vg_details is defined and existing_vg_details.rc == 0 %}
       {{ existing_vg_details.stdout }}
-  when: existing_vg_details is defined
+      {% else %}
+      Unable to get VG details
+      {% endif %}
+  when: 
+    - vg_action == "use_existing"
+    - existing_vg_details is defined
 
 - name: Check if VG name conflicts with existing VGs
   ansible.builtin.debug:
@@ -57,11 +72,11 @@
       Will extend existing VG instead of creating new one.
   when:
     - vg_action == "create"
-    - volume_group_name in existing_vgs_list.stdout_lines
+    - volume_group_name in available_vgs
 
 - name: Auto-adjust VG action for existing VG
   ansible.builtin.set_fact:
     vg_action: "extend"
   when:
     - vg_action == "create"
-    - volume_group_name in existing_vgs_list.stdout_lines
+    - volume_group_name in available_vgs
