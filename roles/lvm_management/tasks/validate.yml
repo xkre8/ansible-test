@@ -7,7 +7,9 @@
 - name: Parse filesystem configuration
   ansible.builtin.set_fact:
     parsed_filesystems: "{{ filesystem_config | from_yaml }}"
-  when: filesystem_config is defined and filesystem_config | length > 0
+  when: 
+    - filesystem_config is defined 
+    - filesystem_config | length > 0
 
 - name: Initialize filesystem_dirs
   ansible.builtin.set_fact:
@@ -31,6 +33,16 @@
   loop_control:
     loop_var: fs
 
+- name: Debug variables before processing
+  ansible.builtin.debug:
+    msg: |
+      DEBUG Variables:
+      - manual_lvm_device: {{ manual_lvm_device | default('NOT_DEFINED') }}
+      - selected_disk_name: {{ selected_disk_name | default('NOT_DEFINED') }}
+      - lvm_device: {{ lvm_device | default('NOT_DEFINED') }}
+      - use_existing_vg: {{ use_existing_vg | default('NOT_DEFINED') }}
+      - existing_vg_name: {{ existing_vg_name | default('NOT_DEFINED') }}
+
 - name: Determine LVM device path
   ansible.builtin.set_fact:
     lvm_device: >-
@@ -44,6 +56,15 @@
   ansible.builtin.set_fact:
     vg_action: "{{ 'use_existing' if (use_existing_vg | default(false) | bool) else vg_action }}"
     volume_group_name: "{{ existing_vg_name if (use_existing_vg | default(false) | bool and existing_vg_name != '') else volume_group_name }}"
+
+- name: Debug final variables
+  ansible.builtin.debug:
+    msg: |
+      FINAL Variables:
+      - Volume Group Name: {{ volume_group_name }}
+      - LVM Device: {{ lvm_device }}
+      - VG Action: {{ vg_action }}
+      - Filesystem Count: {{ filesystem_dirs | length }}
 
 - name: Validate configuration
   ansible.builtin.assert:
