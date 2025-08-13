@@ -1,82 +1,74 @@
 ---
 - name: Get list of all existing Volume Groups
-  ansible.builtin.shell: vgs --noheadings -o vg_name 2>/dev/null | tr -d ' ' || echo ""
-  register: existing_vgs_list
-  changed_when: false
-  failed_when: false
+  ansible.builtin.shell: vgs --noheadings -o vg_name 2>/dev/null | tr -d ' ' | grep -v '^
 
-- name: Set existing VGs fact
+## tasks/validate_input.yml (ปรับปรุงแล้ว)
+```yaml
+---
+- name: Parse filesystem configuration from survey
   ansible.builtin.set_fact:
-    available_vgs: "{{ existing_vgs_list.stdout_lines | select('length') | list }}"
+    parsed_filesystems: "{{ filesystem_config | from_yaml }}"
+  when: filesystem_config is defined and filesystem_config != ""
 
-- name: Display available Volume Groups
-  ansible.builtin.debug:
-    msg: |
-      📦 Available Volume Groups: 
-      {% if available_vgs | length > 0 %}
-      {% for vg in available_vgs %}
-      - {{ vg }}
-      {% endfor %}
-      {% else %}
-      No existing Volume Groups found
-      {% endif %}
-      
-      Selected action: {{ vg_action }}
-      Target VG: {{ volume_group_name }}
-
-- name: Validate existing VG selection
-  ansible.builtin.fail:
-    msg: |
-      ❌ Volume Group '{{ volume_group_name }}' does not exist!
-      
-      Available Volume Groups:
-      {% if available_vgs | length > 0 %}
-      {% for vg in available_vgs %}
-      - {{ vg }}
-      {% endfor %}
-      {% else %}
-      No Volume Groups available
-      {% endif %}
-      
-      Please select from available VGs or choose 'create' option.
-  when:
-    - vg_action == "use_existing"
-    - volume_group_name not in available_vgs
-
-- name: Get detailed VG information for existing VG
-  ansible.builtin.command: vgs --units m "{{ volume_group_name }}" -o vg_name,pv_count,lv_count,vg_size,vg_free
-  register: existing_vg_details
-  changed_when: false
-  failed_when: false
-  when: 
-    - vg_action == "use_existing"
-    - volume_group_name in available_vgs
-
-- name: Display existing VG information
-  ansible.builtin.debug:
-    msg: |
-      📦 Using existing Volume Group: {{ volume_group_name }}
-      {% if existing_vg_details is defined and existing_vg_details.rc == 0 %}
-      {{ existing_vg_details.stdout }}
-      {% else %}
-      Unable to get VG details
-      {% endif %}
-  when: 
-    - vg_action == "use_existing"
-    - existing_vg_details is defined
-
-- name: Check if VG name conflicts with existing VGs
-  ansible.builtin.debug:
-    msg: |
-      ⚠️  WARNING: Volume Group '{{ volume_group_name }}' already exists!
-      Will extend existing VG instead of creating new one.
-  when:
-    - vg_action == "create"
-    - volume_group_name in available_vgs
-
-- name: Auto-adjust VG action for existing VG
+- name: Initialize filesystem_dirs
   ansible.builtin.set_fact:
-    vg_action: "extend"
-  when:
-    - vg_action == "create"
-    - volume_group_name in available_vgs
+    filesystem_dirs: []
+
+- name: Build filesystem configuration with defaults
+  ansible.builtin.set_fact:
+    filesystem_dirs: "{{ filesystem_dirs + [enhanced_fs_config] }}"
+  vars:
+    enhanced_fs_config:
+      path: "{{ fs.path }}"
+      lv_name: "{{ fs.lv_name }}"
+      owner: "{{ fs.owner | default(default_owner) }}"
+      group: "{{ fs.group | default(default_group) }}"
+      mode: "{{ fs.mode | default(default_mode) }}"
+      create_lvm: "{{ fs.create_lvm | default(true) }}"
+      size_mb: "{{ fs.size_mb }}"
+      fstype: "{{ fs.fstype | default(default_fstype) }}"
+      mount_opts: "{{ fs.mount_opts | default(default_mount_opts) }}"
+  loop: "{{ parsed_filesystems | default([]) }}"
+  loop_control:
+    loop_var: fs
+
+- name: Determine LVM device path
+  ansible.builtin.set_fact:
+    lvm_device: >-
+      {{ 
+        manual_lvm_device if (manual_lvm_device is defined and manual_lvm_device != '') 
+        else ('/dev/' + selected_disk_name) if (selected_disk_name is defined and selected_disk_name != '') 
+        else lvm_device 
+      }}
+
+- name: Determine VG management approach
+  ansible.builtin.set_fact:
+    vg_action: >-
+      {{ 
+        'use_existing' if (use_existing_vg | default(false) | bool) 
+        else ('extend' if (vg_action == 'extend') 
+        else 'create')
+      }}
+    volume_group_name: >-
+      {{ 
+        existing_vg_name if (use_existing_vg | default(false) | bool and existing_vg_name != '') 
+        else volume_group_name 
+      }}
+
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - volume_group_name != ""
+      - filesystem_dirs | length > 0
+      - (lvm_device != "" or vg_action == "use_existing")
+    fail_msg: |
+      Missing required configuration:
+      - volume_group_name: {{ volume_group_name }}
+      - lvm_device: {{ lvm_device }} (not required for existing VG)
+      - vg_action: {{ vg_action }}
+      - filesystem_dirs count: {{ filesystem_dirs | length }}
+
+- name: Install required packages
+  ansible.builtin.package:
+    name: "{{ required_packages }}"
+    state: present
