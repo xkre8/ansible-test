@@ -7,7 +7,7 @@
 
 - name: Set available VGs list
   ansible.builtin.set_fact:
-    available_vgs: "{{ vg_list_result.stdout_lines | default([]) | map('trim') | select('length') | list }}"
+    available_vgs: "{{ vg_list_result.stdout_lines | default([]) | map('trim') | reject('equalto', '') | list }}"
 
 - name: Display VG information
   ansible.builtin.debug:
