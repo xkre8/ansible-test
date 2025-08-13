@@ -1,0 +1,74 @@
+---
+- name: Get existing Volume Groups
+  ansible.builtin.command: vgs --noheadings -o vg_name
+  register: existing_vgs
+  changed_when: false
+  failed_when: false
+
+- name: Parse existing VGs list
+  ansible.builtin.set_fact:
+    existing_vgs_list: "{{ existing_vgs.stdout_lines | map('trim') | list if existing_vgs.rc == 0 else [] }}"
+
+- name: Display available Volume Groups
+  ansible.builtin.debug:
+    msg: |
+      📋 Available Volume Groups on system:
+      {% if existing_vgs_list | length > 0 %}
+      {% for vg in existing_vgs_list %}
+      - {{ vg }}
+      {% endfor %}
+      {% else %}
+      No existing Volume Groups found
+      {% endif %}
+
+- name: Validate VG strategy requirements
+  block:
+    # For use_existing strategy
+    - name: Validate existing VG for use_existing strategy
+      ansible.builtin.fail:
+        msg: |
+          ❌ Volume Group '{{ volume_group_name }}' does not exist!
+          
+          📋 Available Volume Groups:
+          {% for vg in existing_vgs_list %}
+          - {{ vg }}
+          {% endfor %}
+          
+          Please choose an existing VG or change strategy to 'create_new'.
+      when:
+        - vg_strategy == 'use_existing'
+        - volume_group_name not in existing_vgs_list
+
+    # For extend_existing strategy  
+    - name: Validate existing VG for extend_existing strategy
+      ansible.builtin.fail:
+        msg: |
+          ❌ Volume Group '{{ volume_group_name }}' does not exist!
+          Cannot extend non-existing Volume Group.
+          
+          📋 Available Volume Groups:
+          {% for vg in existing_vgs_list %}
+          - {{ vg }}
+          {% endfor %}
+          
+          Please choose an existing VG or change strategy to 'create_new'.
+      when:
+        - vg_strategy == 'extend_existing'
+        - volume_group_name not in existing_vgs_list
+
+    # For create_new strategy
+    - name: Validate new VG name for create_new strategy
+      ansible.builtin.fail:
+        msg: |
+          ❌ Volume Group '{{ volume_group_name }}' already exists!
+          Cannot create VG with existing name.
+          
+          📋 Existing Volume Groups:
+          {% for vg in existing_vgs_list %}
+          - {{ vg }}
+          {% endfor %}
+          
+          Please choose a different name or change strategy to 'use_existing' or 'extend_existing'.
+      when:
+        - vg_strategy == 'create_new'
+        - volume_group_name in existing_vgs_list

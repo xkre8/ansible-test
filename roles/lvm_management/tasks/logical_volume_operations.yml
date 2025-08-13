@@ -1,0 +1,52 @@
+---
+- name: Get Volume Group size information
+  ansible.builtin.command: vgs --noheadings --units m "{{ volume_group_name }}" -o vg_size,vg_free
+  register: vg_size_info
+  changed_when: false
+  when: filesystem_dirs | length > 0
+
+- name: Parse VG size information
+  ansible.builtin.set_fact:
+    vg_total_size: "{{ vg_size_info.stdout.split()[0] | regex_replace('m', '') | int }}"
+    vg_free_size: "{{ vg_size_info.stdout.split()[1] | regex_replace('m', '') | int }}"
+  when: vg_size_info is defined and vg_size_info.stdout is defined
+
+- name: Calculate total requested size
+  ansible.builtin.set_fact:
+    total_requested_size: "{{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) | map(attribute='size_mb') | map('int') | sum }}"
+
+- name: Check if requested size exceeds available space
+  ansible.builtin.fail:
+    msg: |
+      ❌ Insufficient space in Volume Group {{ volume_group_name }}!
+      
+      📊 Volume Group Information:
+      - Total Size: {{ vg_total_size }}MB
+      - Free Space: {{ vg_free_size }}MB
+      - Requested Size: {{ total_requested_size }}MB
+      - Space Needed: {{ (total_requested_size | int) - (vg_free_size | int) }}MB more
+      
+      {% if vg_strategy == 'use_existing' %}
+      Suggestions:
+      - Reduce the size_mb values in filesystem configuration
+      - Change strategy to 'extend_existing' and add more disks
+      {% elif vg_strategy == 'extend_existing' %}
+      - Add a larger disk or multiple disks
+      - Reduce the size_mb values in filesystem configuration
+      {% else %}
+      - Use a larger disk
+      - Reduce the size_mb values in filesystem configuration
+      {% endif %}
+  when:
+    - vg_free_size is defined
+    - total_requested_size is defined
+    - (total_requested_size | int) > (vg_free_size | int)
+
+- name: Create Logical Volumes
+  community.general.lvol:
+    vg: "{{ volume_group_name }}"
+    lv: "{{ item.lv_name }}"
+    size: "{{ item.size_mb }}m"
+    state: present
+  loop: "{{ filesystem_dirs }}"
+  when: item.create_lvm | default(false)
