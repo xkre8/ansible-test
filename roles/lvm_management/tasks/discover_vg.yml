@@ -3,8 +3,6 @@
   ansible.builtin.shell: vgs --noheadings -o vg_name 2>/dev/null | tr -d ' ' | grep -v '^
 
 ## tasks/validate_input.yml (ปรับปรุงแล้ว)
-```yaml
----
 - name: Parse filesystem configuration from survey
   ansible.builtin.set_fact:
     parsed_filesystems: "{{ filesystem_config | from_yaml }}"
