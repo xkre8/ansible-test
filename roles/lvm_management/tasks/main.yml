@@ -1,281 +1,307 @@
-- name: Parse filesystem configuration
-  ansible.builtin.set_fact:
-    parsed_filesystems: "{{ filesystem_config | from_yaml }}"
-  when: filesystem_config is defined
+# - name: Parse filesystem configuration
+#   ansible.builtin.set_fact:
+#     parsed_filesystems: "{{ filesystem_config | from_yaml }}"
+#   when: filesystem_config is defined
 
-- name: Initialize filesystem_dirs as empty list
-  ansible.builtin.set_fact:
-    filesystem_dirs: []
+# - name: Initialize filesystem_dirs as empty list
+#   ansible.builtin.set_fact:
+#     filesystem_dirs: []
 
-- name: Build complete filesystem configuration
-  ansible.builtin.set_fact:
-    filesystem_dirs: "{{ filesystem_dirs + [item] }}"
-  vars:
-    item:
-      path: "{{ fs.path }}"
-      lv_name: "{{ fs.lv_name }}"
-      owner: "{{ fs.owner | default('root') }}"
-      group: "{{ fs.group | default('root') }}"
-      mode: "{{ fs.mode | default('0755') }}"
-      create_lvm: "{{ fs.create_lvm | default(true) }}"
-      size_mb: "{{ fs.size_mb }}"
-      fstype: "{{ fs.fstype | default('xfs') }}"
-      mount_opts: "{{ fs.mount_opts | default('defaults') }}"
-  loop: "{{ parsed_filesystems }}"
-  loop_control:
-    loop_var: fs
-  when: filesystem_config is defined
+# - name: Build complete filesystem configuration
+#   ansible.builtin.set_fact:
+#     filesystem_dirs: "{{ filesystem_dirs + [item] }}"
+#   vars:
+#     item:
+#       path: "{{ fs.path }}"
+#       lv_name: "{{ fs.lv_name }}"
+#       owner: "{{ fs.owner | default('root') }}"
+#       group: "{{ fs.group | default('root') }}"
+#       mode: "{{ fs.mode | default('0755') }}"
+#       create_lvm: "{{ fs.create_lvm | default(true) }}"
+#       size_mb: "{{ fs.size_mb }}"
+#       fstype: "{{ fs.fstype | default('xfs') }}"
+#       mount_opts: "{{ fs.mount_opts | default('defaults') }}"
+#   loop: "{{ parsed_filesystems }}"
+#   loop_control:
+#     loop_var: fs
+#   when: filesystem_config is defined
 
-# Install required packages
-- name: Install LVM packages
-  ansible.builtin.package:
-    name: lvm2
-    state: present
+# # Install required packages
+# - name: Install LVM packages
+#   ansible.builtin.package:
+#     name: lvm2
+#     state: present
 
 
 
-# Disk discovery and validation
-- name: Set lvm_device from survey input
-  ansible.builtin.set_fact:
-    lvm_device: "{{ manual_lvm_device if (manual_lvm_device is defined and manual_lvm_device != '') else '/dev/' + selected_disk_name if (selected_disk_name is defined and selected_disk_name != '') else lvm_device }}"
+# # Disk discovery and validation
+# - name: Set lvm_device from survey input
+#   ansible.builtin.set_fact:
+#     lvm_device: "{{ manual_lvm_device if (manual_lvm_device is defined and manual_lvm_device != '') else '/dev/' + selected_disk_name if (selected_disk_name is defined and selected_disk_name != '') else lvm_device }}"
 
-- name: Get available disks information for validation
-  ansible.builtin.command: lsblk -n -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE
-  register: available_disks_info  
-  changed_when: false
-  when: lvm_device is defined and lvm_device != ""
+# - name: Get available disks information for validation
+#   ansible.builtin.command: lsblk -n -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE
+#   register: available_disks_info  
+#   changed_when: false
+#   when: lvm_device is defined and lvm_device != ""
 
-- name: Display available disks for reference
-  ansible.builtin.debug:
-    msg: |
-      Available block devices:
-      {{ available_disks_info.stdout }}
+# - name: Display available disks for reference
+#   ansible.builtin.debug:
+#     msg: |
+#       Available block devices:
+#       {{ available_disks_info.stdout }}
       
-      Selected LVM device: {{ lvm_device }}
-  when: available_disks_info is defined
+#       Selected LVM device: {{ lvm_device }}
+#   when: available_disks_info is defined
 
-- name: Validate selected disk exists
-  ansible.builtin.stat:
-    path: "{{ lvm_device }}"
-  register: disk_stat
-  when: lvm_device is defined and lvm_device != ""
+# - name: Validate selected disk exists
+#   ansible.builtin.stat:
+#     path: "{{ lvm_device }}"
+#   register: disk_stat
+#   when: lvm_device is defined and lvm_device != ""
 
-- name: Show available disks when selected disk not found
-  ansible.builtin.command: lsblk -l
-  register: lsblk_list
-  changed_when: false
-  when:
-    - lvm_device is defined 
+# - name: Show available disks when selected disk not found
+#   ansible.builtin.command: lsblk -l
+#   register: lsblk_list
+#   changed_when: false
+#   when:
+#     - lvm_device is defined 
+#     - lvm_device != ""
+#     - not disk_stat.stat.exists
+
+# - name: Display available disks and fail
+#   ansible.builtin.fail:
+#     msg: |
+#       ❌ Selected disk {{ lvm_device }} does not exist!
+      
+#       📋 Available disks:
+#       {{ lsblk_list.stdout }}
+      
+#       Please select from the available disks above.
+#   when:
+#     - lvm_device is defined 
+#     - lvm_device != ""
+#     - not disk_stat.stat.exists
+
+# - name: Check if disk is already in use
+#   ansible.builtin.shell: |
+#     if pvdisplay {{ lvm_device }} 2>/dev/null; then
+#       echo "pv_exists"
+#     elif lsblk -n {{ lvm_device }} | grep -q part; then  
+#       echo "has_partitions"
+#     elif lsblk -n {{ lvm_device }} | awk '{print $7}' | grep -q '/'; then
+#       echo "mounted"
+#     else
+#       echo "available"
+#     fi
+#   register: disk_status
+#   changed_when: false
+#   failed_when: false
+#   when: lvm_device is defined and lvm_device != ""
+
+# - name: Display disk status
+#   ansible.builtin.debug:
+#     msg: "Disk {{ lvm_device }} status: {{ disk_status.stdout }}"
+#   when: disk_status is defined
+
+# - name: Warning if disk already has PV
+#   ansible.builtin.debug:
+#     msg: "WARNING: {{ lvm_device }} already has a Physical Volume. Will proceed to use existing PV."
+#   when: 
+#     - disk_status is defined
+#     - disk_status.stdout == "pv_exists"
+
+# # Check if Volume Group already exists
+# - name: Check if Volume Group exists
+#   ansible.builtin.command: vgs "{{ volume_group_name }}"
+#   register: vg_check
+#   failed_when: false
+#   changed_when: false
+#   when: 
+#     - volume_group_name is defined
+#     - volume_group_name != ""
+
+# - name: Display VG status
+#   ansible.builtin.debug:
+#     msg: "{{ 'Volume Group ' + volume_group_name + ' already exists - will use existing VG' if vg_check.rc == 0 else 'Volume Group ' + volume_group_name + ' will be created' }}"
+#   when: volume_group_name is defined and volume_group_name != ""
+
+# # Create Volume Group with Physical Volume (idempotent)
+# - name: Create or extend Volume Group
+#   community.general.lvg:
+#     vg: "{{ volume_group_name }}"
+#     pvs: "{{ lvm_device }}"
+#     state: present
+#   when: 
+#     - lvm_device is defined 
+#     - lvm_device != ""
+#     - volume_group_name is defined
+#     - volume_group_name != ""
+
+# # Create Logical Volumes with size validation
+# - name: Get Volume Group size information
+#   ansible.builtin.command: vgs --noheadings --units m "{{ volume_group_name }}" -o vg_size,vg_free
+#   register: vg_size_info
+#   changed_when: false
+#   when: 
+#     - volume_group_name is defined
+#     - volume_group_name != ""
+#     - filesystem_dirs | length > 0
+
+# - name: Parse VG size information
+#   ansible.builtin.set_fact:
+#     vg_total_size: "{{ vg_size_info.stdout.split()[0] | regex_replace('m', '') | int }}"
+#     vg_free_size: "{{ vg_size_info.stdout.split()[1] | regex_replace('m', '') | int }}"
+#   when: vg_size_info is defined and vg_size_info.stdout is defined
+
+# - name: Calculate total requested size
+#   ansible.builtin.set_fact:
+#     total_requested_size: "{{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) | map(attribute='size_mb') | map('int') | sum }}"
+
+# - name: Check if requested size exceeds available space
+#   ansible.builtin.fail:
+#     msg: |
+#       ❌ Insufficient space in Volume Group {{ volume_group_name }}!
+      
+#       📊 Volume Group Information:
+#       - Total Size: {{ vg_total_size }}MB
+#       - Free Space: {{ vg_free_size }}MB
+#       - Requested Size: {{ total_requested_size }}MB
+#       - Space Needed: {{ (total_requested_size | int) - (vg_free_size | int) }}MB more
+      
+#       Please reduce the size_mb values or extend the volume group.
+#   when:
+#     - vg_free_size is defined
+#     - total_requested_size is defined
+#     - (total_requested_size | int) > (vg_free_size | int)
+
+# - name: Create Logical Volumes
+#   community.general.lvol:
+#     vg: "{{ volume_group_name }}"
+#     lv: "{{ item.lv_name }}"
+#     size: "{{ item.size_mb }}m"
+#     state: present
+#   loop: "{{ filesystem_dirs }}"
+#   when: 
+#     - item.create_lvm | default(false)
+#     - volume_group_name is defined
+#     - volume_group_name != ""
+
+# # Create filesystems
+# - name: Create filesystems on Logical Volumes
+#   community.general.filesystem:
+#     fstype: "{{ item.fstype | default('xfs') }}"
+#     dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+#     force: no
+#   loop: "{{ filesystem_dirs }}"
+#   when: item.create_lvm | default(false)
+
+# # Create mount directories
+# - name: Create mount directories
+#   ansible.builtin.file:
+#     path: "{{ item.path }}"
+#     state: directory
+#     owner: "{{ item.owner | default('root') }}"
+#     group: "{{ item.group | default('root') }}"
+#     mode: "{{ item.mode | default('0755') }}"
+#   loop: "{{ filesystem_dirs }}"
+
+# # Mount filesystems
+# - name: Mount filesystems
+#   ansible.posix.mount:
+#     path: "{{ item.path }}"
+#     src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+#     fstype: "{{ item.fstype | default('xfs') }}"
+#     opts: "{{ item.mount_opts | default('defaults') }}"
+#     state: mounted
+#   loop: "{{ filesystem_dirs }}"
+#   when: item.create_lvm | default(false)
+
+# # Add to fstab for persistent mounting
+# - name: Add filesystems to /etc/fstab
+#   ansible.posix.mount:
+#     path: "{{ item.path }}"
+#     src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+#     fstype: "{{ item.fstype | default('xfs') }}"
+#     opts: "{{ item.mount_opts | default('defaults') }}"
+#     state: present
+#   loop: "{{ filesystem_dirs }}"
+#   when: item.create_lvm | default(false)
+
+# # Final Summary Debug - Show PV, VG, LV information
+# - name: Get Physical Volume information
+#   ansible.builtin.command: pvs --noheadings "{{ lvm_device }}" -o pv_name,vg_name,pv_size,pv_free
+#   register: pv_info
+#   changed_when: false
+#   failed_when: false
+#   when: lvm_device is defined and lvm_device != ""
+
+# - name: Get Volume Group detailed information  
+#   ansible.builtin.command: vgs --noheadings "{{ volume_group_name }}" -o vg_name,pv_count,lv_count,vg_size,vg_free
+#   register: vg_detailed_info
+#   changed_when: false
+#   failed_when: false
+#   when: volume_group_name is defined and volume_group_name != ""
+
+# - name: Get Logical Volume information
+#   ansible.builtin.command: lvs --noheadings "{{ volume_group_name }}" -o lv_name,lv_size,lv_path
+#   register: lv_info
+#   changed_when: false
+#   failed_when: false
+#   when: volume_group_name is defined and volume_group_name != ""
+
+# - name: Display comprehensive LVM summary
+#   ansible.builtin.debug:
+#     msg: |
+      
+#       🎯 ===== LVM SETUP SUMMARY =====
+      
+#       📀 Physical Volume (PV):
+#       {{ pv_info.stdout if pv_info.stdout is defined else 'No PV information available' }}
+      
+#       📦 Volume Group (VG):
+#       {{ vg_detailed_info.stdout if vg_detailed_info.stdout is defined else 'No VG information available' }}
+      
+#       💾 Logical Volumes (LV):
+#       {% if lv_info.stdout_lines is defined %}
+#       {% for lv in lv_info.stdout_lines %}
+#       {{ lv }}
+#       {% endfor %}
+#       {% else %}
+#       No LV information available
+#       {% endif %}
+      
+#       🗂️  Mounted Filesystems:
+#       {% for item in filesystem_dirs %}
+#       {% if item.create_lvm | default(false) %}
+#       - {{ item.lv_name }}: {{ item.path }} ({{ item.size_mb }}MB, {{ item.fstype }})
+#       {% endif %}
+#       {% endfor %}
+      
+#       ✅ LVM setup completed successfully!
+
+
+---
+- name: Include input validation tasks
+  ansible.builtin.include_tasks: validate_input.yml
+
+- name: Include VG discovery tasks
+  ansible.builtin.include_tasks: discover_vg.yml
+
+- name: Include disk preparation tasks  
+  ansible.builtin.include_tasks: prepare_disk.yml
+  when: 
+    - vg_action in ['create', 'extend']
     - lvm_device != ""
-    - not disk_stat.stat.exists
 
-- name: Display available disks and fail
-  ansible.builtin.fail:
-    msg: |
-      ❌ Selected disk {{ lvm_device }} does not exist!
-      
-      📋 Available disks:
-      {{ lsblk_list.stdout }}
-      
-      Please select from the available disks above.
-  when:
-    - lvm_device is defined 
-    - lvm_device != ""
-    - not disk_stat.stat.exists
-
-- name: Check if disk is already in use
-  ansible.builtin.shell: |
-    if pvdisplay {{ lvm_device }} 2>/dev/null; then
-      echo "pv_exists"
-    elif lsblk -n {{ lvm_device }} | grep -q part; then  
-      echo "has_partitions"
-    elif lsblk -n {{ lvm_device }} | awk '{print $7}' | grep -q '/'; then
-      echo "mounted"
-    else
-      echo "available"
-    fi
-  register: disk_status
-  changed_when: false
-  failed_when: false
-  when: lvm_device is defined and lvm_device != ""
-
-- name: Display disk status
-  ansible.builtin.debug:
-    msg: "Disk {{ lvm_device }} status: {{ disk_status.stdout }}"
-  when: disk_status is defined
-
-- name: Warning if disk already has PV
-  ansible.builtin.debug:
-    msg: "WARNING: {{ lvm_device }} already has a Physical Volume. Will proceed to use existing PV."
+- name: Include LVM creation tasks
+  ansible.builtin.include_tasks: create_lvm.yml
   when: 
-    - disk_status is defined
-    - disk_status.stdout == "pv_exists"
-
-# Check if Volume Group already exists
-- name: Check if Volume Group exists
-  ansible.builtin.command: vgs "{{ volume_group_name }}"
-  register: vg_check
-  failed_when: false
-  changed_when: false
-  when: 
-    - volume_group_name is defined
     - volume_group_name != ""
 
-- name: Display VG status
-  ansible.builtin.debug:
-    msg: "{{ 'Volume Group ' + volume_group_name + ' already exists - will use existing VG' if vg_check.rc == 0 else 'Volume Group ' + volume_group_name + ' will be created' }}"
-  when: volume_group_name is defined and volume_group_name != ""
+- name: Include filesystem creation tasks
+  ansible.builtin.include_tasks: create_filesystems.yml
+  when: filesystem_dirs | length > 0
 
-# Create Volume Group with Physical Volume (idempotent)
-- name: Create or extend Volume Group
-  community.general.lvg:
-    vg: "{{ volume_group_name }}"
-    pvs: "{{ lvm_device }}"
-    state: present
-  when: 
-    - lvm_device is defined 
-    - lvm_device != ""
-    - volume_group_name is defined
-    - volume_group_name != ""
-
-# Create Logical Volumes with size validation
-- name: Get Volume Group size information
-  ansible.builtin.command: vgs --noheadings --units m "{{ volume_group_name }}" -o vg_size,vg_free
-  register: vg_size_info
-  changed_when: false
-  when: 
-    - volume_group_name is defined
-    - volume_group_name != ""
-    - filesystem_dirs | length > 0
-
-- name: Parse VG size information
-  ansible.builtin.set_fact:
-    vg_total_size: "{{ vg_size_info.stdout.split()[0] | regex_replace('m', '') | int }}"
-    vg_free_size: "{{ vg_size_info.stdout.split()[1] | regex_replace('m', '') | int }}"
-  when: vg_size_info is defined and vg_size_info.stdout is defined
-
-- name: Calculate total requested size
-  ansible.builtin.set_fact:
-    total_requested_size: "{{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) | map(attribute='size_mb') | map('int') | sum }}"
-
-- name: Check if requested size exceeds available space
-  ansible.builtin.fail:
-    msg: |
-      ❌ Insufficient space in Volume Group {{ volume_group_name }}!
-      
-      📊 Volume Group Information:
-      - Total Size: {{ vg_total_size }}MB
-      - Free Space: {{ vg_free_size }}MB
-      - Requested Size: {{ total_requested_size }}MB
-      - Space Needed: {{ (total_requested_size | int) - (vg_free_size | int) }}MB more
-      
-      Please reduce the size_mb values or extend the volume group.
-  when:
-    - vg_free_size is defined
-    - total_requested_size is defined
-    - (total_requested_size | int) > (vg_free_size | int)
-
-- name: Create Logical Volumes
-  community.general.lvol:
-    vg: "{{ volume_group_name }}"
-    lv: "{{ item.lv_name }}"
-    size: "{{ item.size_mb }}m"
-    state: present
-  loop: "{{ filesystem_dirs }}"
-  when: 
-    - item.create_lvm | default(false)
-    - volume_group_name is defined
-    - volume_group_name != ""
-
-# Create filesystems
-- name: Create filesystems on Logical Volumes
-  community.general.filesystem:
-    fstype: "{{ item.fstype | default('xfs') }}"
-    dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
-    force: no
-  loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(false)
-
-# Create mount directories
-- name: Create mount directories
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: directory
-    owner: "{{ item.owner | default('root') }}"
-    group: "{{ item.group | default('root') }}"
-    mode: "{{ item.mode | default('0755') }}"
-  loop: "{{ filesystem_dirs }}"
-
-# Mount filesystems
-- name: Mount filesystems
-  ansible.posix.mount:
-    path: "{{ item.path }}"
-    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
-    fstype: "{{ item.fstype | default('xfs') }}"
-    opts: "{{ item.mount_opts | default('defaults') }}"
-    state: mounted
-  loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(false)
-
-# Add to fstab for persistent mounting
-- name: Add filesystems to /etc/fstab
-  ansible.posix.mount:
-    path: "{{ item.path }}"
-    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
-    fstype: "{{ item.fstype | default('xfs') }}"
-    opts: "{{ item.mount_opts | default('defaults') }}"
-    state: present
-  loop: "{{ filesystem_dirs }}"
-  when: item.create_lvm | default(false)
-
-# Final Summary Debug - Show PV, VG, LV information
-- name: Get Physical Volume information
-  ansible.builtin.command: pvs --noheadings "{{ lvm_device }}" -o pv_name,vg_name,pv_size,pv_free
-  register: pv_info
-  changed_when: false
-  failed_when: false
-  when: lvm_device is defined and lvm_device != ""
-
-- name: Get Volume Group detailed information  
-  ansible.builtin.command: vgs --noheadings "{{ volume_group_name }}" -o vg_name,pv_count,lv_count,vg_size,vg_free
-  register: vg_detailed_info
-  changed_when: false
-  failed_when: false
-  when: volume_group_name is defined and volume_group_name != ""
-
-- name: Get Logical Volume information
-  ansible.builtin.command: lvs --noheadings "{{ volume_group_name }}" -o lv_name,lv_size,lv_path
-  register: lv_info
-  changed_when: false
-  failed_when: false
-  when: volume_group_name is defined and volume_group_name != ""
-
-- name: Display comprehensive LVM summary
-  ansible.builtin.debug:
-    msg: |
-      
-      🎯 ===== LVM SETUP SUMMARY =====
-      
-      📀 Physical Volume (PV):
-      {{ pv_info.stdout if pv_info.stdout is defined else 'No PV information available' }}
-      
-      📦 Volume Group (VG):
-      {{ vg_detailed_info.stdout if vg_detailed_info.stdout is defined else 'No VG information available' }}
-      
-      💾 Logical Volumes (LV):
-      {% if lv_info.stdout_lines is defined %}
-      {% for lv in lv_info.stdout_lines %}
-      {{ lv }}
-      {% endfor %}
-      {% else %}
-      No LV information available
-      {% endif %}
-      
-      🗂️  Mounted Filesystems:
-      {% for item in filesystem_dirs %}
-      {% if item.create_lvm | default(false) %}
-      - {{ item.lv_name }}: {{ item.path }} ({{ item.size_mb }}MB, {{ item.fstype }})
-      {% endif %}
-      {% endfor %}
-      
-      ✅ LVM setup completed successfully!
+- name: Include summary display tasks
+  ansible.builtin.include_tasks: display_summary.yml

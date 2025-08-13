@@ -1,0 +1,67 @@
+---
+- name: Get list of all existing Volume Groups
+  ansible.builtin.shell: vgs --noheadings -o vg_name | tr -d ' '
+  register: existing_vgs_list
+  changed_when: false
+  failed_when: false
+
+- name: Display available Volume Groups
+  ansible.builtin.debug:
+    msg: |
+      📦 Available Volume Groups: 
+      {% if existing_vgs_list.stdout_lines | length > 0 %}
+      {% for vg in existing_vgs_list.stdout_lines %}
+      - {{ vg }}
+      {% endfor %}
+      {% else %}
+      No existing Volume Groups found
+      {% endif %}
+      
+      Selected action: {{ vg_action }}
+      Target VG: {{ volume_group_name }}
+
+- name: Validate existing VG selection
+  ansible.builtin.fail:
+    msg: |
+      ❌ Volume Group '{{ volume_group_name }}' does not exist!
+      
+      Available Volume Groups:
+      {% for vg in existing_vgs_list.stdout_lines %}
+      - {{ vg }}
+      {% endfor %}
+      
+      Please select from available VGs or choose 'create' option.
+  when:
+    - vg_action == "use_existing"
+    - volume_group_name not in existing_vgs_list.stdout_lines
+
+- name: Get detailed VG information for existing VG
+  ansible.builtin.command: vgs --units m "{{ volume_group_name }}" -o vg_name,pv_count,lv_count,vg_size,vg_free
+  register: existing_vg_details
+  changed_when: false
+  when: 
+    - vg_action == "use_existing"
+    - volume_group_name in existing_vgs_list.stdout_lines
+
+- name: Display existing VG information
+  ansible.builtin.debug:
+    msg: |
+      📦 Using existing Volume Group: {{ volume_group_name }}
+      {{ existing_vg_details.stdout }}
+  when: existing_vg_details is defined
+
+- name: Check if VG name conflicts with existing VGs
+  ansible.builtin.debug:
+    msg: |
+      ⚠️  WARNING: Volume Group '{{ volume_group_name }}' already exists!
+      Will extend existing VG instead of creating new one.
+  when:
+    - vg_action == "create"
+    - volume_group_name in existing_vgs_list.stdout_lines
+
+- name: Auto-adjust VG action for existing VG
+  ansible.builtin.set_fact:
+    vg_action: "extend"
+  when:
+    - vg_action == "create"
+    - volume_group_name in existing_vgs_list.stdout_lines

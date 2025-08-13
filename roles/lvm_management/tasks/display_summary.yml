@@ -1,0 +1,60 @@
+---
+- name: Gather LVM information for summary
+  ansible.builtin.shell: |
+    echo "=== PHYSICAL VOLUME ==="
+    pvs --noheadings {{ lvm_device }} -o pv_name,vg_name,pv_size,pv_free 2>/dev/null || echo "No PV info available"
+    echo ""
+    echo "=== VOLUME GROUP ==="  
+    vgs --noheadings {{ volume_group_name }} -o vg_name,pv_count,lv_count,vg_size,vg_free 2>/dev/null || echo "No VG info available"
+    echo ""
+    echo "=== LOGICAL VOLUMES ==="
+    lvs --noheadings {{ volume_group_name }} -o lv_name,lv_size,lv_path 2>/dev/null || echo "No LV info available"
+  register: lvm_summary_info
+  changed_when: false
+  failed_when: false
+
+- name: Display comprehensive setup summary
+  ansible.builtin.debug:
+    msg: |
+      
+      🎯 ===== LVM SETUP COMPLETED SUCCESSFULLY =====
+      
+      {{ lvm_summary_info.stdout }}
+      
+      🗂️  Configured Filesystems:
+      {% for fs in filesystem_dirs %}
+      {% if fs.create_lvm %}
+      - {{ fs.lv_name }}: {{ fs.path }} ({{ fs.size_mb }}MB, {{ fs.fstype }}, {{ fs.mount_opts }})
+        Owner: {{ fs.owner }}:{{ fs.group }} Mode: {{ fs.mode }}
+      {% endif %}
+      {% endfor %}
+      
+      ✅ All filesystems are mounted and ready for use!
+
+- name: Create deployment summary file
+  ansible.builtin.copy:
+    content: |
+      # LVM Deployment Summary
+      Date: {{ ansible_date_time.iso8601 }}
+      Host: {{ inventory_hostname }}
+      
+      ## Configuration
+      - Volume Group: {{ volume_group_name }}
+      - Physical Device: {{ lvm_device }}
+      - Total Filesystems: {{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) | list | length }}
+      
+      ## Filesystems Created
+      {% for fs in filesystem_dirs | selectattr('create_lvm', 'equalto', true) %}
+      - {{ fs.path }}:
+        - Logical Volume: {{ fs.lv_name }}
+        - Size: {{ fs.size_mb }}MB
+        - Filesystem: {{ fs.fstype }}
+        - Permissions: {{ fs.owner }}:{{ fs.group }} {{ fs.mode }}
+        - Mount Options: {{ fs.mount_opts }}
+      {% endfor %}
+      
+      ## LVM Details
+      {{ lvm_summary_info.stdout }}
+    dest: "/tmp/lvm_deployment_{{ volume_group_name }}_{{ ansible_date_time.epoch }}.txt"
+  delegate_to: localhost
+  run_once: true

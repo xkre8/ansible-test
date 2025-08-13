@@ -1,0 +1,11 @@
+---
+# Internal variables
+required_packages:
+  - lvm2
+
+# Common disk types for validation
+common_disk_types:
+  - sd[a-z]
+  - nvme[0-9]n[0-9]
+  - vd[a-z]
+  - xvd[a-z]
