@@ -281,32 +281,427 @@
 #       ✅ LVM setup completed successfully!
 
 
+# tasks/main.yml - Enhanced with VG Strategy Support
 ---
-- name: Validate input parameters
-  ansible.builtin.include_tasks: validate.yml
+# Parse survey input
+- name: Parse filesystem configuration
+  ansible.builtin.set_fact:
+    parsed_filesystems: "{{ filesystem_config | from_yaml }}"
+  when: filesystem_config is defined
 
-- name: Discover available disks
-  ansible.builtin.include_tasks: disk_discovery.yml
-  when: vg_strategy | default(vg_action) in ['create_new', 'create', 'extend_existing', 'extend']
+- name: Initialize filesystem_dirs as empty list
+  ansible.builtin.set_fact:
+    filesystem_dirs: []
 
-- name: Discover Volume Groups
-  ansible.builtin.include_tasks: vg_discovery.yml
+- name: Build complete filesystem configuration
+  ansible.builtin.set_fact:
+    filesystem_dirs: "{{ filesystem_dirs + [item] }}"
+  vars:
+    item:
+      path: "{{ fs.path }}"
+      lv_name: "{{ fs.lv_name }}"
+      owner: "{{ fs.owner | default('root') }}"
+      group: "{{ fs.group | default('root') }}"
+      mode: "{{ fs.mode | default('0755') }}"
+      create_lvm: "{{ fs.create_lvm | default(true) }}"
+      size_mb: "{{ fs.size_mb }}"
+      fstype: "{{ fs.fstype | default('xfs') }}"
+      mount_opts: "{{ fs.mount_opts | default('defaults') }}"
+  loop: "{{ parsed_filesystems }}"
+  loop_control:
+    loop_var: fs
+  when: filesystem_config is defined
 
-- name: Setup disk (if needed)
-  ansible.builtin.include_tasks: disk_setup.yml
+# Install required packages
+- name: Install LVM packages
+  ansible.builtin.package:
+    name: lvm2
+    state: present
+
+# ==============================================
+# VG Strategy Implementation
+# ==============================================
+
+- name: Display selected VG strategy
+  ansible.builtin.debug:
+    msg: |
+      🎯 Volume Group Strategy: {{ vg_strategy | default('create_new') }}
+      📦 Volume Group Name: {{ volume_group_name }}
+      
+      Strategy Details:
+      {% if vg_strategy == 'create_new' %}
+      - Will create a brand new Volume Group
+      - Requires a disk to be specified
+      {% elif vg_strategy == 'use_existing' %}
+      - Will use existing Volume Group
+      - No disk required (will use existing space)
+      {% elif vg_strategy == 'extend_existing' %}
+      - Will extend existing Volume Group with additional disk
+      - Requires a disk to be specified
+      {% endif %}
+
+# Get list of existing Volume Groups for validation
+- name: Get existing Volume Groups
+  ansible.builtin.command: vgs --noheadings -o vg_name
+  register: existing_vgs
+  changed_when: false
+  failed_when: false
+
+- name: Parse existing VGs list
+  ansible.builtin.set_fact:
+    existing_vgs_list: "{{ existing_vgs.stdout_lines | map('trim') | list if existing_vgs.rc == 0 else [] }}"
+
+- name: Display available Volume Groups
+  ansible.builtin.debug:
+    msg: |
+      📋 Available Volume Groups on system:
+      {% if existing_vgs_list | length > 0 %}
+      {% for vg in existing_vgs_list %}
+      - {{ vg }}
+      {% endfor %}
+      {% else %}
+      No existing Volume Groups found
+      {% endif %}
+
+# ==============================================
+# Strategy Validation
+# ==============================================
+
+- name: Validate VG strategy requirements
+  block:
+    # For use_existing strategy
+    - name: Validate existing VG for use_existing strategy
+      ansible.builtin.fail:
+        msg: |
+          ❌ Volume Group '{{ volume_group_name }}' does not exist!
+          
+          📋 Available Volume Groups:
+          {% for vg in existing_vgs_list %}
+          - {{ vg }}
+          {% endfor %}
+          
+          Please choose an existing VG or change strategy to 'create_new'.
+      when:
+        - vg_strategy == 'use_existing'
+        - volume_group_name not in existing_vgs_list
+
+    # For extend_existing strategy  
+    - name: Validate existing VG for extend_existing strategy
+      ansible.builtin.fail:
+        msg: |
+          ❌ Volume Group '{{ volume_group_name }}' does not exist!
+          Cannot extend non-existing Volume Group.
+          
+          📋 Available Volume Groups:
+          {% for vg in existing_vgs_list %}
+          - {{ vg }}
+          {% endfor %}
+          
+          Please choose an existing VG or change strategy to 'create_new'.
+      when:
+        - vg_strategy == 'extend_existing'
+        - volume_group_name not in existing_vgs_list
+
+    # For create_new strategy
+    - name: Validate new VG name for create_new strategy
+      ansible.builtin.fail:
+        msg: |
+          ❌ Volume Group '{{ volume_group_name }}' already exists!
+          Cannot create VG with existing name.
+          
+          📋 Existing Volume Groups:
+          {% for vg in existing_vgs_list %}
+          - {{ vg }}
+          {% endfor %}
+          
+          Please choose a different name or change strategy to 'use_existing' or 'extend_existing'.
+      when:
+        - vg_strategy == 'create_new'
+        - volume_group_name in existing_vgs_list
+
+# ==============================================
+# Disk Management (Only for create_new and extend_existing)
+# ==============================================
+
+- name: Handle disk requirements based on strategy
+  block:
+    # Set lvm_device from survey input (only when disk is needed)
+    - name: Set lvm_device from survey input
+      ansible.builtin.set_fact:
+        lvm_device: "{{ manual_lvm_device if (manual_lvm_device is defined and manual_lvm_device != '') else '/dev/' + selected_disk_name if (selected_disk_name is defined and selected_disk_name != '') else lvm_device }}"
+
+    - name: Validate disk is specified when required
+      ansible.builtin.fail:
+        msg: |
+          ❌ Disk must be specified for '{{ vg_strategy }}' strategy!
+          Please specify either 'selected_disk_name' or 'manual_lvm_device'.
+      when: 
+        - lvm_device is not defined or lvm_device == ""
+
+    - name: Get available disks information for validation
+      ansible.builtin.command: lsblk -n -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE
+      register: available_disks_info  
+      changed_when: false
+
+    - name: Display available disks for reference
+      ansible.builtin.debug:
+        msg: |
+          Available block devices:
+          {{ available_disks_info.stdout }}
+          
+          Selected LVM device: {{ lvm_device }}
+
+    - name: Validate selected disk exists
+      ansible.builtin.stat:
+        path: "{{ lvm_device }}"
+      register: disk_stat
+
+    - name: Show available disks when selected disk not found
+      ansible.builtin.command: lsblk -l
+      register: lsblk_list
+      changed_when: false
+      when: not disk_stat.stat.exists
+
+    - name: Display available disks and fail
+      ansible.builtin.fail:
+        msg: |
+          ❌ Selected disk {{ lvm_device }} does not exist!
+          
+          📋 Available disks:
+          {{ lsblk_list.stdout }}
+          
+          Please select from the available disks above.
+      when: not disk_stat.stat.exists
+
+    - name: Check if disk is already in use
+      ansible.builtin.shell: |
+        if pvdisplay {{ lvm_device }} 2>/dev/null; then
+          echo "pv_exists"
+        elif lsblk -n {{ lvm_device }} | grep -q part; then  
+          echo "has_partitions"
+        elif lsblk -n {{ lvm_device }} | awk '{print $7}' | grep -q '/'; then
+          echo "mounted"
+        else
+          echo "available"
+        fi
+      register: disk_status
+      changed_when: false
+      failed_when: false
+
+    - name: Display disk status
+      ansible.builtin.debug:
+        msg: "Disk {{ lvm_device }} status: {{ disk_status.stdout }}"
+
+    - name: Check for disk conflicts in create_new strategy
+      ansible.builtin.fail:
+        msg: |
+          ❌ Disk {{ lvm_device }} is already in use as Physical Volume!
+          Status: {{ disk_status.stdout }}
+          
+          For 'create_new' strategy, please use an unused disk or change to 'extend_existing' strategy.
+      when:
+        - vg_strategy == 'create_new'
+        - disk_status.stdout == 'pv_exists'
+        - force_disk_usage is not defined or force_disk_usage != 'true'
+
+    - name: Warning if disk already has PV (extend_existing strategy)
+      ansible.builtin.debug:
+        msg: "INFO: {{ lvm_device }} already has a Physical Volume. Will add to Volume Group."
+      when: 
+        - vg_strategy == 'extend_existing'
+        - disk_status.stdout == 'pv_exists'
+
+  when: vg_strategy in ['create_new', 'extend_existing']
+
+# ==============================================
+# Volume Group Operations Based on Strategy
+# ==============================================
+
+# Strategy: create_new
+- name: Create new Volume Group (create_new strategy)
+  community.general.lvg:
+    vg: "{{ volume_group_name }}"
+    pvs: "{{ lvm_device }}"
+    state: present
   when: 
-    - vg_action in ['create', 'extend']
-    - lvm_device is defined
-    - lvm_device != ""
-    - lvm_device != "/dev/"
+    - vg_strategy == 'create_new'
+    - lvm_device is defined and lvm_device != ""
 
-- name: Setup LVM
-  ansible.builtin.include_tasks: lvm_setup.yml
-  when: volume_group_name != ""
+# Strategy: extend_existing  
+- name: Extend existing Volume Group (extend_existing strategy)
+  community.general.lvg:
+    vg: "{{ volume_group_name }}"
+    pvs: "{{ lvm_device }}"
+    state: present
+  when: 
+    - vg_strategy == 'extend_existing' 
+    - lvm_device is defined and lvm_device != ""
 
-- name: Setup filesystems
-  ansible.builtin.include_tasks: filesystem_setup.yml
+# Strategy: use_existing (no VG operations needed)
+- name: Using existing Volume Group (use_existing strategy)
+  ansible.builtin.debug:
+    msg: "ℹ️  Using existing Volume Group '{{ volume_group_name }}' - no disk operations needed."
+  when: vg_strategy == 'use_existing'
+
+# ==============================================
+# Logical Volume Management (All Strategies)
+# ==============================================
+
+- name: Get Volume Group size information
+  ansible.builtin.command: vgs --noheadings --units m "{{ volume_group_name }}" -o vg_size,vg_free
+  register: vg_size_info
+  changed_when: false
   when: filesystem_dirs | length > 0
 
-- name: Display summary
-  ansible.builtin.include_tasks: summary.yml
+- name: Parse VG size information
+  ansible.builtin.set_fact:
+    vg_total_size: "{{ vg_size_info.stdout.split()[0] | regex_replace('m', '') | int }}"
+    vg_free_size: "{{ vg_size_info.stdout.split()[1] | regex_replace('m', '') | int }}"
+  when: vg_size_info is defined and vg_size_info.stdout is defined
+
+- name: Calculate total requested size
+  ansible.builtin.set_fact:
+    total_requested_size: "{{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) | map(attribute='size_mb') | map('int') | sum }}"
+
+- name: Check if requested size exceeds available space
+  ansible.builtin.fail:
+    msg: |
+      ❌ Insufficient space in Volume Group {{ volume_group_name }}!
+      
+      📊 Volume Group Information:
+      - Total Size: {{ vg_total_size }}MB
+      - Free Space: {{ vg_free_size }}MB
+      - Requested Size: {{ total_requested_size }}MB
+      - Space Needed: {{ (total_requested_size | int) - (vg_free_size | int) }}MB more
+      
+      {% if vg_strategy == 'use_existing' %}
+      Suggestions:
+      - Reduce the size_mb values in filesystem configuration
+      - Change strategy to 'extend_existing' and add more disks
+      {% elif vg_strategy == 'extend_existing' %}
+      - Add a larger disk or multiple disks
+      - Reduce the size_mb values in filesystem configuration
+      {% else %}
+      - Use a larger disk
+      - Reduce the size_mb values in filesystem configuration
+      {% endif %}
+  when:
+    - vg_free_size is defined
+    - total_requested_size is defined
+    - (total_requested_size | int) > (vg_free_size | int)
+
+- name: Create Logical Volumes
+  community.general.lvol:
+    vg: "{{ volume_group_name }}"
+    lv: "{{ item.lv_name }}"
+    size: "{{ item.size_mb }}m"
+    state: present
+  loop: "{{ filesystem_dirs }}"
+  when: item.create_lvm | default(false)
+
+# Create filesystems
+- name: Create filesystems on Logical Volumes
+  community.general.filesystem:
+    fstype: "{{ item.fstype | default('xfs') }}"
+    dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    force: no
+  loop: "{{ filesystem_dirs }}"
+  when: item.create_lvm | default(false)
+
+# Create mount directories
+- name: Create mount directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop: "{{ filesystem_dirs }}"
+
+# Mount filesystems
+- name: Mount filesystems
+  ansible.posix.mount:
+    path: "{{ item.path }}"
+    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    fstype: "{{ item.fstype | default('xfs') }}"
+    opts: "{{ item.mount_opts | default('defaults') }}"
+    state: mounted
+  loop: "{{ filesystem_dirs }}"
+  when: item.create_lvm | default(false)
+
+# Add to fstab for persistent mounting
+- name: Add filesystems to /etc/fstab
+  ansible.posix.mount:
+    path: "{{ item.path }}"
+    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    fstype: "{{ item.fstype | default('xfs') }}"
+    opts: "{{ item.mount_opts | default('defaults') }}"
+    state: present
+  loop: "{{ filesystem_dirs }}"
+  when: item.create_lvm | default(false)
+
+# ==============================================
+# Final Summary with Strategy Context
+# ==============================================
+
+- name: Get Physical Volume information (when disk is used)
+  ansible.builtin.command: pvs --noheadings "{{ lvm_device }}" -o pv_name,vg_name,pv_size,pv_free
+  register: pv_info
+  changed_when: false
+  failed_when: false
+  when: 
+    - lvm_device is defined and lvm_device != ""
+    - vg_strategy in ['create_new', 'extend_existing']
+
+- name: Get Volume Group detailed information  
+  ansible.builtin.command: vgs --noheadings "{{ volume_group_name }}" -o vg_name,pv_count,lv_count,vg_size,vg_free
+  register: vg_detailed_info
+  changed_when: false
+  failed_when: false
+
+- name: Get Logical Volume information
+  ansible.builtin.command: lvs --noheadings "{{ volume_group_name }}" -o lv_name,lv_size,lv_path
+  register: lv_info
+  changed_when: false
+  failed_when: false
+
+- name: Display comprehensive LVM summary with strategy context
+  ansible.builtin.debug:
+    msg: |
+      
+      🎯 ===== LVM SETUP SUMMARY =====
+      
+      📋 Strategy Used: {{ vg_strategy | upper }}
+      {% if vg_strategy == 'create_new' %}
+      ✨ Created new Volume Group with fresh disk
+      {% elif vg_strategy == 'extend_existing' %}
+      📈 Extended existing Volume Group with additional disk
+      {% elif vg_strategy == 'use_existing' %}
+      🔄 Used existing Volume Group (no disk operations)
+      {% endif %}
+      
+      {% if vg_strategy in ['create_new', 'extend_existing'] %}
+      📀 Physical Volume (PV):
+      {{ pv_info.stdout if pv_info.stdout is defined else 'No PV information available' }}
+      {% endif %}
+      
+      📦 Volume Group (VG):
+      {{ vg_detailed_info.stdout if vg_detailed_info.stdout is defined else 'No VG information available' }}
+      
+      💾 Logical Volumes (LV):
+      {% if lv_info.stdout_lines is defined %}
+      {% for lv in lv_info.stdout_lines %}
+      {{ lv }}
+      {% endfor %}
+      {% else %}
+      No LV information available
+      {% endif %}
+      
+      🗂️  Mounted Filesystems:
+      {% for item in filesystem_dirs %}
+      {% if item.create_lvm | default(false) %}
+      - {{ item.lv_name }}: {{ item.path }} ({{ item.size_mb }}MB, {{ item.fstype }})
+      {% endif %}
+      {% endfor %}
+      
+      ✅ LVM setup completed successfully with {{ vg_strategy }} strategy!
