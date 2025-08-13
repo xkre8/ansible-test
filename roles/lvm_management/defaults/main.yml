@@ -71,22 +71,27 @@
 # min_disk_size_gb: 1  
 
 ---
-# LVM Management Default Variables
+# Enhanced LVM Management Default Variables
 lvm_device: ""
 volume_group_name: ""
 filesystem_dirs: []
 
-# VG Management Options
-vg_action: "create"  # create, use_existing, extend
+# Enhanced VG Strategy (ใช้แทน vg_action)
+vg_strategy: "create_new"  # create_new, use_existing, extend_existing
+selected_existing_vg: ""
+
+# Legacy compatibility (จะถูก convert อัตโนมัติ)
+vg_action: ""  # จะถูกตั้งค่าจาก vg_strategy
 use_existing_vg: false
 existing_vg_name: ""
 
 # Default Filesystem Settings
 default_fstype: "xfs"
-default_owner: "root"
+default_owner: "root" 
 default_group: "root"
 default_mode: "0755"
 default_mount_opts: "defaults"
 
 # Safety Settings
 force_disk_usage: false
+show_available_vgs: true

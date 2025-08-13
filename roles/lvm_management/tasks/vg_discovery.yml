@@ -7,35 +7,72 @@
 
 - name: Set available VGs list
   ansible.builtin.set_fact:
-    available_vgs: "{{ vg_list_result.stdout_lines | default([]) | map('trim') | reject('equalto', '') | list }}"
+    available_vgs: "{{ vg_list_result.stdout_lines | default([]) | map('trim') | select('length') | list }}"
 
-- name: Display VG information
+- name: Get detailed VG information
+  ansible.builtin.command: vgs --noheadings -o vg_name,vg_size,vg_free --units m
+  register: vg_details_result
+  changed_when: false
+  failed_when: false
+
+- name: Display enhanced VG information
   ansible.builtin.debug:
     msg: |
-      📦 Volume Group Discovery:
-      Available VGs: {{ available_vgs | join(', ') if available_vgs | length > 0 else 'None' }}
-      Selected VG: {{ volume_group_name }}
-      Action: {{ vg_action }}
+      📦 Enhanced Volume Group Discovery:
+      
+      Strategy: {{ vg_strategy }}
+      Target VG: {{ volume_group_name }}
+      
+      Available Volume Groups:
+      {% if available_vgs | length > 0 %}
+      {{ vg_details_result.stdout }}
+      {% else %}
+      None found
+      {% endif %}
+      
+      Action Plan:
+      {% if vg_strategy == 'create_new' %}
+      🆕 Will create new VG '{{ volume_group_name }}' on {{ lvm_device }}
+      {% elif vg_strategy == 'use_existing' %}
+      📋 Will use existing VG '{{ volume_group_name }}'
+      {% elif vg_strategy == 'extend_existing' %}
+      📈 Will extend VG '{{ volume_group_name }}' with {{ lvm_device }}
+      {% endif %}
 
-- name: Validate existing VG selection
+- name: Validate existing VG for use_existing strategy
   ansible.builtin.fail:
     msg: |
-      ❌ Volume Group '{{ volume_group_name }}' not found!
+      ❌ VG Strategy Validation Failed!
+      
+      Strategy: use_existing
+      Requested VG: {{ volume_group_name }}
       Available VGs: {{ available_vgs | join(', ') if available_vgs | length > 0 else 'None' }}
+      
+      💡 Available options:
+      {% for vg in available_vgs %}
+      - {{ vg }}
+      {% endfor %}
   when:
-    - vg_action == "use_existing"
+    - vg_strategy == "use_existing"
     - volume_group_name not in available_vgs
 
-- name: Auto-adjust action for existing VG
+- name: Auto-adjust strategy for existing VG
   ansible.builtin.set_fact:
+    vg_strategy: "extend_existing"
     vg_action: "extend"
   when:
-    - vg_action == "create"
+    - vg_strategy == "create_new"
     - volume_group_name in available_vgs
 
-- name: Display action adjustment
+- name: Display strategy auto-adjustment
   ansible.builtin.debug:
-    msg: "⚠️ VG '{{ volume_group_name }}' exists. Changed action to 'extend'."
+    msg: |
+      🔄 Strategy Auto-Adjustment:
+      Original: create_new
+      Adjusted: extend_existing
+      Reason: VG '{{ volume_group_name }}' already exists
+      
+      ℹ️ Will extend existing VG with {{ lvm_device }}
   when:
-    - vg_action == "extend" 
+    - vg_strategy == "extend_existing" 
     - volume_group_name in available_vgs

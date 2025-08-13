@@ -1,38 +1,97 @@
-# ❌ โค้ดที่ผิด (น่าจะมีแฝงอยู่)
-- name: Auto-discover available disk
-  ansible.builtin.shell: |
-    lsblk -ndo NAME,TYPE | awk '$2=="disk" && !/^(loop|sr)/ {print "/dev/"$1; exit}'
-  register: discovered_disk
-  changed_when: false
-  when: lvm_device == ""
+---
+- name: Install required packages
+  ansible.builtin.package:
+    name: lvm2
+    state: present
 
-- name: Set LVM device from discovery
+# Enhanced strategy conversion
+- name: Convert VG strategy to legacy variables
   ansible.builtin.set_fact:
-    lvm_device: "{{ discovered_disk.stdout | trim }}"
-  when: discovered_disk.stdout != ""  # ← ปัญหาตรงนี้
+    vg_action: >-
+      {{
+        'create' if vg_strategy == 'create_new'
+        else 'use_existing' if vg_strategy == 'use_existing'  
+        else 'extend' if vg_strategy == 'extend_existing'
+        else vg_action
+      }}
+    use_existing_vg: "{{ vg_strategy == 'use_existing' }}"
+    existing_vg_name: >-
+      {{
+        selected_existing_vg if (vg_strategy == 'use_existing' and selected_existing_vg != '')
+        else volume_group_name if vg_strategy == 'use_existing'
+        else ''
+      }}
 
-# ✅ โค้ดที่ถูกต้อง
-- name: Auto-discover available disk
-  ansible.builtin.shell: |
-    lsblk -ndo NAME,TYPE | awk '$2=="disk" && !/^(loop|sr)/ {print "/dev/"$1; exit}'
-  register: discovered_disk_result
-  changed_when: false
-  failed_when: false
-  when: lvm_device == ""
+- name: Display strategy conversion
+  ansible.builtin.debug:
+    msg: |
+      🔄 Strategy Conversion:
+      Input Strategy: {{ vg_strategy }}
+      Converted to Action: {{ vg_action }}
+      Use Existing VG: {{ use_existing_vg }}
+      VG Name: {{ volume_group_name }}
 
-- name: Set LVM device from discovery
+- name: Parse filesystem configuration
   ansible.builtin.set_fact:
-    lvm_device: "{{ discovered_disk_result.stdout | trim }}"
-  when: 
-    - discovered_disk_result is defined
-    - discovered_disk_result.stdout is defined
-    - discovered_disk_result.stdout != ""
-    - lvm_device == ""
+    parsed_filesystems: "{{ filesystem_config | from_yaml }}"
+  when: filesystem_config is defined and filesystem_config | length > 0
 
-# หรือแบบปลอดภัยกว่า
-- name: Set LVM device from discovery (Safe)
+- name: Initialize filesystem_dirs
   ansible.builtin.set_fact:
-    lvm_device: "{{ discovered_disk_result.stdout | trim }}"
-  when: 
-    - discovered_disk_result is not skipped
-    - discovered_disk_result.stdout | default('') != ""
+    filesystem_dirs: []
+
+- name: Build filesystem configuration  
+  ansible.builtin.set_fact:
+    filesystem_dirs: "{{ filesystem_dirs + [item] }}"
+  vars:
+    item:
+      path: "{{ fs.path }}"
+      lv_name: "{{ fs.lv_name }}"
+      owner: "{{ fs.owner | default(default_owner) }}"
+      group: "{{ fs.group | default(default_group) }}"
+      mode: "{{ fs.mode | default(default_mode) }}"
+      create_lvm: "{{ fs.create_lvm | default(true) }}"
+      size_mb: "{{ fs.size_mb }}"
+      fstype: "{{ fs.fstype | default(default_fstype) }}"
+      mount_opts: "{{ fs.mount_opts | default(default_mount_opts) }}"
+  loop: "{{ parsed_filesystems | default([]) }}"
+  loop_control:
+    loop_var: fs
+
+- name: Determine LVM device path
+  ansible.builtin.set_fact:
+    lvm_device: >-
+      {{ 
+        manual_lvm_device if (manual_lvm_device is defined and manual_lvm_device != '') 
+        else ('/dev/' + selected_disk_name) if (selected_disk_name is defined and selected_disk_name != '') 
+        else lvm_device 
+      }}
+
+- name: Enhanced validation with better error messages
+  ansible.builtin.assert:
+    that:
+      - volume_group_name != ""
+      - filesystem_dirs | length > 0  
+      - vg_strategy in ['create_new', 'use_existing', 'extend_existing']
+      - (lvm_device != "" or vg_strategy == "use_existing")
+    fail_msg: |
+      ❌ Enhanced Configuration Validation Failed:
+      
+      Strategy: {{ vg_strategy }}
+      Volume Group: {{ volume_group_name }}
+      LVM Device: {{ lvm_device }}
+      Filesystems: {{ filesystem_dirs | length }}
+      
+      Requirements:
+      {% if volume_group_name == "" %}
+      ⚠️ Volume Group name is required
+      {% endif %}
+      {% if filesystem_dirs | length == 0 %}
+      ⚠️ At least one filesystem must be configured
+      {% endif %}
+      {% if vg_strategy not in ['create_new', 'use_existing', 'extend_existing'] %}
+      ⚠️ Invalid VG strategy: {{ vg_strategy }}
+      {% endif %}
+      {% if lvm_device == "" and vg_strategy != "use_existing" %}
+      ⚠️ LVM device required for {{ vg_strategy }} strategy
+      {% endif %}
