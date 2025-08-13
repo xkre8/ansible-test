@@ -282,26 +282,26 @@
 
 
 ---
-- name: Include input validation tasks
-  ansible.builtin.include_tasks: validate_input.yml
+- name: Validate input parameters
+  ansible.builtin.include_tasks: validate.yml
 
-- name: Include VG discovery tasks
-  ansible.builtin.include_tasks: discover_vg.yml
+- name: Discover Volume Groups
+  ansible.builtin.include_tasks: vg_discovery.yml
 
-- name: Include disk preparation tasks  
-  ansible.builtin.include_tasks: prepare_disk.yml
+- name: Setup disk (if needed)
+  ansible.builtin.include_tasks: disk_setup.yml
   when: 
     - vg_action in ['create', 'extend']
+    - lvm_device is defined
     - lvm_device != ""
 
-- name: Include LVM creation tasks
-  ansible.builtin.include_tasks: create_lvm.yml
-  when: 
-    - volume_group_name != ""
+- name: Setup LVM
+  ansible.builtin.include_tasks: lvm_setup.yml
+  when: volume_group_name != ""
 
-- name: Include filesystem creation tasks
-  ansible.builtin.include_tasks: create_filesystems.yml
+- name: Setup filesystems
+  ansible.builtin.include_tasks: filesystem_setup.yml
   when: filesystem_dirs | length > 0
 
-- name: Include summary display tasks
-  ansible.builtin.include_tasks: display_summary.yml
+- name: Display summary
+  ansible.builtin.include_tasks: summary.yml

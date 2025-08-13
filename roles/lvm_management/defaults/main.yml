@@ -71,27 +71,22 @@
 # min_disk_size_gb: 1  
 
 ---
-# Default values for LVM management
+# LVM Management Default Variables
 lvm_device: ""
 volume_group_name: ""
 filesystem_dirs: []
 
-# VG management settings
+# VG Management Options
 vg_action: "create"  # create, use_existing, extend
 use_existing_vg: false
 existing_vg_name: ""
 
-# Disk discovery settings
-auto_discover_disks: true
-min_disk_size_gb: 1
-
-# Default filesystem settings
+# Default Filesystem Settings
 default_fstype: "xfs"
 default_owner: "root"
 default_group: "root"
 default_mode: "0755"
 default_mount_opts: "defaults"
 
-# Validation settings
-skip_disk_validation: false
+# Safety Settings
 force_disk_usage: false

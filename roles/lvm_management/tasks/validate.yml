@@ -1,18 +1,23 @@
 ---
-- name: Parse filesystem configuration from survey
+- name: Install required packages
+  ansible.builtin.package:
+    name: lvm2
+    state: present
+
+- name: Parse filesystem configuration
   ansible.builtin.set_fact:
     parsed_filesystems: "{{ filesystem_config | from_yaml }}"
-  when: filesystem_config is defined and filesystem_config != ""
+  when: filesystem_config is defined and filesystem_config | length > 0
 
 - name: Initialize filesystem_dirs
   ansible.builtin.set_fact:
     filesystem_dirs: []
 
-- name: Build filesystem configuration with defaults
+- name: Build filesystem configuration
   ansible.builtin.set_fact:
-    filesystem_dirs: "{{ filesystem_dirs + [enhanced_fs_config] }}"
+    filesystem_dirs: "{{ filesystem_dirs + [item] }}"
   vars:
-    enhanced_fs_config:
+    item:
       path: "{{ fs.path }}"
       lv_name: "{{ fs.lv_name }}"
       owner: "{{ fs.owner | default(default_owner) }}"
@@ -35,34 +40,20 @@
         else lvm_device 
       }}
 
-- name: Determine VG management approach
+- name: Determine VG action and name
   ansible.builtin.set_fact:
-    vg_action: >-
-      {{ 
-        'use_existing' if (use_existing_vg | default(false) | bool) 
-        else ('extend' if (vg_action == 'extend') 
-        else 'create')
-      }}
-    volume_group_name: >-
-      {{ 
-        existing_vg_name if (use_existing_vg | default(false) | bool and existing_vg_name != '') 
-        else volume_group_name 
-      }}
+    vg_action: "{{ 'use_existing' if (use_existing_vg | default(false) | bool) else vg_action }}"
+    volume_group_name: "{{ existing_vg_name if (use_existing_vg | default(false) | bool and existing_vg_name != '') else volume_group_name }}"
 
-- name: Validate required variables
+- name: Validate configuration
   ansible.builtin.assert:
     that:
       - volume_group_name != ""
       - filesystem_dirs | length > 0
       - (lvm_device != "" or vg_action == "use_existing")
     fail_msg: |
-      Missing required configuration:
-      - volume_group_name: {{ volume_group_name }}
-      - lvm_device: {{ lvm_device }} (not required for existing VG)
-      - vg_action: {{ vg_action }}
-      - filesystem_dirs count: {{ filesystem_dirs | length }}
-
-- name: Install required packages
-  ansible.builtin.package:
-    name: "{{ required_packages }}"
-    state: present
+      ❌ Configuration validation failed:
+      - Volume Group Name: {{ volume_group_name }}
+      - LVM Device: {{ lvm_device }}
+      - VG Action: {{ vg_action }}
+      - Filesystem Count: {{ filesystem_dirs | length }}

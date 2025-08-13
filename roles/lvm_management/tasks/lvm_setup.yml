@@ -1,0 +1,58 @@
+---
+- name: Create or extend Volume Group
+  community.general.lvg:
+    vg: "{{ volume_group_name }}"
+    pvs: "{{ lvm_device }}"
+    state: present
+  when: vg_action in ['create', 'extend']
+  register: vg_result
+
+- name: Display VG operation result
+  ansible.builtin.debug:
+    msg: |
+      📦 Volume Group Operation:
+      {% if vg_action == 'create' and vg_result.changed %}
+      ✅ Created VG '{{ volume_group_name }}'
+      {% elif vg_action == 'extend' and vg_result.changed %}
+      ✅ Extended VG '{{ volume_group_name }}' with {{ lvm_device }}
+      {% elif vg_action == 'use_existing' %}
+      📋 Using existing VG '{{ volume_group_name }}'
+      {% else %}
+      📋 VG '{{ volume_group_name }}' already configured
+      {% endif %}
+
+- name: Get VG free space
+  ansible.builtin.command: vgs --noheadings --units m {{ volume_group_name }} -o vg_free
+  register: vg_space
+  changed_when: false
+
+- name: Calculate space requirements
+  ansible.builtin.set_fact:
+    required_space_mb: "{{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) | map(attribute='size_mb') | map('int') | sum }}"
+    available_space_mb: "{{ vg_space.stdout.strip() | regex_replace('m', '') | int }}"
+
+- name: Validate space availability
+  ansible.builtin.fail:
+    msg: |
+      ❌ Insufficient space in VG '{{ volume_group_name }}'!
+      Required: {{ required_space_mb }}MB
+      Available: {{ available_space_mb }}MB
+      Shortfall: {{ (required_space_mb | int) - (available_space_mb | int) }}MB
+  when: (required_space_mb | int) > (available_space_mb | int)
+
+- name: Create Logical Volumes
+  community.general.lvol:
+    vg: "{{ volume_group_name }}"
+    lv: "{{ item.lv_name }}"
+    size: "{{ item.size_mb }}m"
+    state: present
+  loop: "{{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) }}"
+  register: lv_results
+
+- name: Display LV creation results
+  ansible.builtin.debug:
+    msg: |
+      💾 Logical Volume Results:
+      {% for result in lv_results.results %}
+      - {{ result.item.lv_name }}: {{ result.item.size_mb }}MB {% if result.changed %}(CREATED){% else %}(EXISTS){% endif %}
+      {% endfor %}

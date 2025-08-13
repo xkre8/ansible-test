@@ -1,0 +1,41 @@
+---
+- name: Check for existing Volume Groups
+  ansible.builtin.command: vgs --noheadings -o vg_name
+  register: vg_list_result
+  changed_when: false
+  failed_when: false
+
+- name: Set available VGs list
+  ansible.builtin.set_fact:
+    available_vgs: "{{ vg_list_result.stdout_lines | default([]) | map('trim') | select('length') | list }}"
+
+- name: Display VG information
+  ansible.builtin.debug:
+    msg: |
+      📦 Volume Group Discovery:
+      Available VGs: {{ available_vgs | join(', ') if available_vgs | length > 0 else 'None' }}
+      Selected VG: {{ volume_group_name }}
+      Action: {{ vg_action }}
+
+- name: Validate existing VG selection
+  ansible.builtin.fail:
+    msg: |
+      ❌ Volume Group '{{ volume_group_name }}' not found!
+      Available VGs: {{ available_vgs | join(', ') if available_vgs | length > 0 else 'None' }}
+  when:
+    - vg_action == "use_existing"
+    - volume_group_name not in available_vgs
+
+- name: Auto-adjust action for existing VG
+  ansible.builtin.set_fact:
+    vg_action: "extend"
+  when:
+    - vg_action == "create"
+    - volume_group_name in available_vgs
+
+- name: Display action adjustment
+  ansible.builtin.debug:
+    msg: "⚠️ VG '{{ volume_group_name }}' exists. Changed action to 'extend'."
+  when:
+    - vg_action == "extend" 
+    - volume_group_name in available_vgs

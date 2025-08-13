@@ -1,11 +1,10 @@
 ---
-- name: Create filesystems on Logical Volumes
+- name: Create filesystems
   community.general.filesystem:
     fstype: "{{ item.fstype }}"
     dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
     force: false
   loop: "{{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) }}"
-  register: fs_creation
 
 - name: Create mount directories
   ansible.builtin.file:
@@ -16,7 +15,7 @@
     mode: "{{ item.mode }}"
   loop: "{{ filesystem_dirs }}"
 
-- name: Mount filesystems temporarily
+- name: Mount filesystems
   ansible.posix.mount:
     path: "{{ item.path }}"
     src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
@@ -25,7 +24,7 @@
     state: mounted
   loop: "{{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) }}"
 
-- name: Add to fstab for persistent mounting
+- name: Add to fstab
   ansible.posix.mount:
     path: "{{ item.path }}"
     src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
@@ -34,8 +33,8 @@
     state: present
   loop: "{{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) }}"
 
-- name: Verify mount points are accessible
+- name: Verify mounts
   ansible.builtin.command: df -h {{ item.path }}
   loop: "{{ filesystem_dirs | selectattr('create_lvm', 'equalto', true) }}"
-  register: mount_verification
+  register: mount_check
   changed_when: false
