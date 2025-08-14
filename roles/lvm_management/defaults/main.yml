@@ -70,34 +70,53 @@
 # auto_discover_disks: true
 # min_disk_size_gb: 1  
 
+# ---
+# # Enhanced LVM Management Default Variables
+# lvm_device: ""
+# volume_group_name: ""
+# filesystem_dirs: []
+
+# # Enhanced VG Strategy (ใช้แทน vg_action)
+# vg_strategy: "create_new"  # create_new, use_existing, extend_existing
+# selected_existing_vg: ""
+
+# # Legacy compatibility (จะถูก convert อัตโนมัติ)
+# vg_action: ""  # จะถูกตั้งค่าจาก vg_strategy
+# use_existing_vg: false
+# existing_vg_name: ""
+
+# # Default Filesystem Settings
+# default_fstype: "xfs"
+# default_owner: "root" 
+# default_group: "root"
+# default_mode: "0755"
+# default_mount_opts: "defaults"
+
+# # Safety Settings
+# force_disk_usage: false
+# show_available_vgs: true
+
+
+# pv_strategy: "create_new_pv"
+
+# # สำหรับ use_existing_pv strategy
+# existing_pv_device: ""
+
+
 ---
-# Enhanced LVM Management Default Variables
-lvm_device: ""
-volume_group_name: ""
-filesystem_dirs: []
-
-# Enhanced VG Strategy (ใช้แทน vg_action)
+# LVM Configuration Defaults
 vg_strategy: "create_new"  # create_new, use_existing, extend_existing
-selected_existing_vg: ""
+pv_strategy: "create_new_pv"  # create_new_pv, use_existing_pv
+volume_group_name: "vg_data"
 
-# Legacy compatibility (จะถูก convert อัตโนมัติ)
-vg_action: ""  # จะถูกตั้งค่าจาก vg_strategy
-use_existing_vg: false
-existing_vg_name: ""
-
-# Default Filesystem Settings
-default_fstype: "xfs"
-default_owner: "root" 
-default_group: "root"
-default_mode: "0755"
-default_mount_opts: "defaults"
-
-# Safety Settings
-force_disk_usage: false
-show_available_vgs: true
-
-
-pv_strategy: "create_new_pv"
-
-# สำหรับ use_existing_pv strategy
+# Device variables (set by survey)
+selected_disk_name: ""
+manual_lvm_device: ""
 existing_pv_device: ""
+
+# Filesystem configuration (YAML string from survey)
+filesystem_config: |
+  - path: /data
+    lv_name: lv_data
+    size_mb: 5000
+    fstype: xfs
