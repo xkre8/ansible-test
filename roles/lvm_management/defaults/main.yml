@@ -95,3 +95,9 @@ default_mount_opts: "defaults"
 # Safety Settings
 force_disk_usage: false
 show_available_vgs: true
+
+
+pv_strategy: "create_new_pv"
+
+# สำหรับ use_existing_pv strategy
+existing_pv_device: ""

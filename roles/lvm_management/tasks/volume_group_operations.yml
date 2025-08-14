@@ -24,3 +24,26 @@
   ansible.builtin.debug:
     msg: "ℹ️  Using existing Volume Group '{{ volume_group_name }}' - no disk operations needed."
   when: vg_strategy == 'use_existing'
+
+
+# Strategy: create_new
+- name: Create new Volume Group
+  community.general.lvg:
+    vg: "{{ volume_group_name }}"
+    pvs: "{{ target_pv }}"
+    state: present
+  when: vg_strategy == 'create_new'
+
+# Strategy: extend_existing  
+- name: Extend existing Volume Group
+  community.general.lvg:
+    vg: "{{ volume_group_name }}"
+    pvs: "{{ target_pv }}"
+    state: present
+  when: vg_strategy == 'extend_existing'
+
+# Strategy: use_existing (no operations needed)
+- name: Using existing Volume Group
+  ansible.builtin.debug:
+    msg: "ℹ️  Using existing Volume Group '{{ volume_group_name }}' - no disk operations needed."
+  when: vg_strategy == 'use_existing'

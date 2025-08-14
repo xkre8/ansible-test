@@ -423,17 +423,21 @@
 #       ✅ LVM setup completed successfully with {{ vg_strategy }} strategy!
 
 ---
+# ==========================================
+# File: tasks/main.yml (Updated)
+# ==========================================
+
 - name: Parse survey input and initialize variables
   ansible.builtin.include_tasks: parse_input.yml
 
 - name: Install required packages
   ansible.builtin.include_tasks: install_packages.yml
 
-- name: Validate VG strategy and requirements
+- name: Validate VG and PV strategy requirements
   ansible.builtin.include_tasks: validate_strategy.yml
 
-- name: Handle disk operations based on strategy
-  ansible.builtin.include_tasks: disk_management.yml
+- name: Handle Physical Volume operations
+  ansible.builtin.include_tasks: physical_volume_operations.yml
   when: vg_strategy in ['create_new', 'extend_existing']
 
 - name: Manage Volume Group operations
