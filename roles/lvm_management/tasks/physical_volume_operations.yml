@@ -1,77 +1,22 @@
+
 # ==========================================
-# แก้ไข tasks/physical_volume_operations.yml
+# File: tasks/physical_volume_operations.yml (NEW)
 # ==========================================
 ---
-- name: Debug survey input values
-  ansible.builtin.debug:
-    msg: |
-      🔍 Survey Input Debug:
-      - pv_strategy: {{ pv_strategy | default('not_set') }}
-      - selected_disk_name: '{{ selected_disk_name | default('') }}'
-      - manual_lvm_device: '{{ manual_lvm_device | default('') }}'
-      - existing_pv_device: '{{ existing_pv_device | default('') }}'
-      - vg_strategy: {{ vg_strategy | default('not_set') }}
-
-- name: Set lvm_device with better logic
-  ansible.builtin.set_fact:
-    lvm_device: >-
-      {%- if manual_lvm_device is defined and manual_lvm_device != '' -%}
-        {{ manual_lvm_device }}
-      {%- elif selected_disk_name is defined and selected_disk_name != '' -%}
-        {{ '/dev/' + selected_disk_name }}
-      {%- else -%}
-        {{ lvm_device | default('') }}
-      {%- endif -%}
-  when: pv_strategy == 'create_new_pv'
-
 - name: Set target device/PV based on strategy
   ansible.builtin.set_fact:
-    target_pv: >-
-      {%- if pv_strategy == 'use_existing_pv' -%}
-        {{ existing_pv_device }}
-      {%- else -%}
-        {{ lvm_device }}
-      {%- endif -%}
+    target_pv: "{{ existing_pv_device if pv_strategy == 'use_existing_pv' else lvm_device }}"
 
-- name: Display PV strategy selection with debug info
+- name: Display PV strategy selection
   ansible.builtin.debug:
     msg: |
-      🔧 Physical Volume Strategy: {{ pv_strategy | default('create_new_pv') }}
+      🔧 Physical Volume Strategy: {{ pv_strategy }}
       
       {% if pv_strategy == 'use_existing_pv' %}
-      📀 Using existing PV: {{ existing_pv_device | default('NOT_SET') }}
-      {% else %}
-      💿 Creating new PV on: {{ lvm_device | default('NOT_SET') }}
+      📀 Using existing PV: {{ existing_pv_device }}
+      {% elif pv_strategy == 'create_new_pv' %}
+      💿 Creating new PV on: {{ lvm_device }}
       {% endif %}
-      
-      🎯 Final target_pv: {{ target_pv | default('NOT_SET') }}
-
-# แยก validation ออกมาชัดเจน
-- name: Validate PV strategy requirements
-  block:
-    - name: Fail if use_existing_pv but no existing_pv_device specified
-      ansible.builtin.fail:
-        msg: |
-          ❌ PV Strategy 'use_existing_pv' requires existing_pv_device to be specified!
-          Current value: '{{ existing_pv_device | default('') }}'
-      when:
-        - pv_strategy == 'use_existing_pv'
-        - existing_pv_device is not defined or existing_pv_device == ''
-
-    - name: Fail if create_new_pv but no disk specified
-      ansible.builtin.fail:
-        msg: |
-          ❌ PV Strategy 'create_new_pv' requires either selected_disk_name or manual_lvm_device!
-          
-          Current values:
-          - selected_disk_name: '{{ selected_disk_name | default('') }}'
-          - manual_lvm_device: '{{ manual_lvm_device | default('') }}'
-          - resulting lvm_device: '{{ lvm_device | default('') }}'
-          
-          Please specify one of these survey variables.
-      when:
-        - pv_strategy == 'create_new_pv' or pv_strategy is not defined
-        - lvm_device is not defined or lvm_device == ''
 
 # Handle create_new_pv strategy
 - name: Create new Physical Volume
@@ -81,24 +26,9 @@
         path: "{{ lvm_device }}"
       register: disk_stat
 
-    - name: Get available disks when target disk not found
-      ansible.builtin.command: lsblk -d -n -o NAME,SIZE,TYPE
-      register: available_disks
-      changed_when: false
-      when: not disk_stat.stat.exists
-
-    - name: Fail with available disk list if target disk doesn't exist
+    - name: Fail if disk doesn't exist
       ansible.builtin.fail:
-        msg: |
-          ❌ Disk {{ lvm_device }} does not exist!
-          
-          📋 Available disks:
-          {{ available_disks.stdout }}
-          
-          💡 Tips:
-          - Check if disk name is correct (e.g., sdb, nvme0n1)
-          - Use full path if needed (e.g., /dev/sdb, /dev/nvme0n1)
-          - Ensure disk is attached to the system
+        msg: "❌ Disk {{ lvm_device }} does not exist!"
       when: not disk_stat.stat.exists
 
     - name: Check disk status
@@ -130,7 +60,11 @@
         - disk_status.stdout != 'pv_exists'
         - force_disk_usage | default(false) or disk_status.stdout == 'available'
 
-  when: pv_strategy == 'create_new_pv' or pv_strategy is not defined
+    - name: Set target PV for new PV strategy
+      ansible.builtin.set_fact:
+        target_pv: "{{ lvm_device }}"
+
+  when: pv_strategy == 'create_new_pv'
 
 # Handle use_existing_pv strategy
 - name: Validate existing Physical Volume
@@ -141,32 +75,11 @@
       changed_when: false
       failed_when: false
 
-    - name: Get available PVs when target PV not found
-      ansible.builtin.command: pvs --noheadings -o pv_name,vg_name,pv_size
-      register: available_pvs
-      changed_when: false
-      when: existing_pv_vg.rc != 0
-
-    - name: Fail if existing PV not found
-      ansible.builtin.fail:
-        msg: |
-          ❌ Physical Volume '{{ existing_pv_device }}' not found!
-          
-          📋 Available Physical Volumes:
-          {{ available_pvs.stdout if available_pvs.stdout != '' else 'No PVs found on system' }}
-          
-          💡 Use 'pvs' command to list available PVs
-      when: existing_pv_vg.rc != 0
-
     - name: Check PV availability for create_new VG strategy
       ansible.builtin.fail:
         msg: |
           ❌ Physical Volume '{{ existing_pv_device }}' is already assigned to VG '{{ existing_pv_vg.stdout.strip() }}'!
           For 'create_new' VG strategy, PV must be free (unassigned).
-          
-          💡 Either:
-          - Choose a different unassigned PV
-          - Change VG strategy to 'extend_existing'
       when:
         - vg_strategy == 'create_new'
         - existing_pv_vg.stdout.strip() != ''
