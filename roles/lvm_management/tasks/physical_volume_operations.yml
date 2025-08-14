@@ -123,12 +123,21 @@
       when: disk_status.stdout == 'pv_exists'
 
     - name: Create Physical Volume (if needed)
-      community.general.lvg:
-        pvs: "{{ lvm_device }}"
-        state: present
+      ansible.builtin.command: pvcreate {{ lvm_device }}
       when: 
         - disk_status.stdout != 'pv_exists'
-        - force_disk_usage | default(false) or disk_status.stdout == 'available'
+        - (force_disk_usage | default(false)) or (disk_status.stdout == 'available')
+      register: pvcreate_result
+      changed_when: pvcreate_result.rc == 0
+
+    - name: Display PV creation result
+      ansible.builtin.debug:
+        msg: |
+          ✅ Physical Volume created successfully on {{ lvm_device }}
+          Result: {{ pvcreate_result.stdout }}
+      when: 
+        - pvcreate_result is defined 
+        - pvcreate_result.changed
 
   when: pv_strategy == 'create_new_pv' or pv_strategy is not defined
 
