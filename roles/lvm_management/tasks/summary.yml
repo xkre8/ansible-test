@@ -1,21 +1,22 @@
 ---
+# Enhanced tasks/summary.yml
+
 - name: Get comprehensive LVM information
   ansible.builtin.shell: |
     echo "=== VOLUME GROUP DETAILS ==="
-    vgs --units m -o vg_name,vg_size,vg_free,vg_uuid "{{ volume_group_name }}" 2>/dev/null || echo "VG not found"
+    vgs "{{ volume_group_name }}" --units m -o vg_name,vg_size,vg_free,vg_used,pv_count 2>/dev/null || echo "VG not found"
     echo ""
     echo "=== PHYSICAL VOLUMES ==="
-    pvs --units m -o pv_name,vg_name,pv_size,pv_free 2>/dev/null | grep "{{ volume_group_name }}" || echo "No PVs found"
+    pvs --select vg_name="{{ volume_group_name }}" -o pv_name,pv_size,pv_used,pv_free 2>/dev/null || echo "No PVs found"
     echo ""
     echo "=== LOGICAL VOLUMES ==="
-    lvs --units m -o lv_name,vg_name,lv_size,lv_path "{{ volume_group_name }}" 2>/dev/null || echo "No LVs found"
+    lvs "{{ volume_group_name }}" --units m -o lv_name,lv_size,lv_path 2>/dev/null || echo "No LVs found"
     echo ""
     echo "=== MOUNT POINTS ==="
     df -h {{ filesystem_dirs | map(attribute='path') | join(' ') }} 2>/dev/null || echo "Mount info unavailable"
     echo ""
-    echo "=== SPACE UTILIZATION ==="
-    {% set total_lv_size = filesystem_dirs | map(attribute='size_mb') | map('int') | sum %}
-    echo "Total LV Space Allocated: {{ total_lv_size }} MB"
+    echo "=== SIZE SUMMARY ==="
+    echo "Total LV space allocated: {{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum }} MB"
   register: lvm_info
   changed_when: false
   failed_when: false
@@ -24,21 +25,15 @@
   ansible.builtin.debug:
     msg: |
       
-      🎯 LVM SETUP COMPLETE!
+      🎯 LVM Setup Complete!
       ======================
       Strategy: {{ vg_strategy | upper }}
       Volume Group: {{ volume_group_name }}
-      PV Strategy: {{ pv_strategy | upper }}
-      {% if target_device is defined %}
-      Target Device: {{ target_device }}
-      {% endif %}
+      Device: {{ target_device | default('N/A') }}
       
-      📦 CREATED LOGICAL VOLUMES
-      =========================
+      📊 Configuration Applied:
       {% for lv in filesystem_dirs %}
-      ✅ {{ lv.lv_name }} → {{ lv.path }} ({{ lv.size_mb }} MB, {{ lv.fstype | default('xfs') }})
+      • {{ lv.lv_name }}: {{ lv.size_mb }} MB → {{ lv.path }} ({{ lv.fstype }})
       {% endfor %}
       
       {{ lvm_info.stdout }}
-      
-      🚀 All filesystems are now mounted and ready for use!

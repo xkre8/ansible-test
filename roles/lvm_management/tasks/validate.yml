@@ -1,4 +1,6 @@
 ---
+# Enhanced tasks/validate.yml
+
 # Basic validation only
 - name: Check required variables
   ansible.builtin.fail:
@@ -17,6 +19,19 @@
     - selected_disk_name == ""
     - manual_lvm_device == ""
     - existing_pv_device == "" or pv_strategy != 'use_existing_pv'
+
+- name: Set target device for validation
+  ansible.builtin.set_fact:
+    target_device: >-
+      {%- if pv_strategy == 'use_existing_pv' -%}
+        {{ existing_pv_device }}
+      {%- elif manual_lvm_device != '' -%}
+        {{ manual_lvm_device }}
+      {%- elif selected_disk_name != '' -%}
+        {{ '/dev/' + selected_disk_name }}
+      {%- endif -%}
+  when: 
+    - vg_strategy in ['create_new', 'extend_existing']
 
 - name: Validate device exists
   ansible.builtin.stat:
@@ -42,25 +57,29 @@
   changed_when: false
   when: vg_strategy == 'create_new'
 
-# Validate filesystem configuration format
-- name: Validate filesystem configuration is parseable
+- name: Validate filesystem configuration syntax
   ansible.builtin.set_fact:
-    test_parse: "{{ filesystem_config | from_yaml }}"
-  when: filesystem_config is defined and filesystem_config != ""
+    filesystem_dirs_test: "{{ (filesystem_config | from_yaml) if filesystem_config is defined else [] }}"
+  failed_when: false
+  register: yaml_test
 
-- name: Validate LV names are unique
+- name: Check filesystem configuration is valid YAML
   ansible.builtin.fail:
-    msg: "Duplicate logical volume name found: {{ item.lv_name }}"
-  when: filesystem_dirs | selectattr('lv_name', 'equalto', item.lv_name) | list | length > 1
-  loop: "{{ filesystem_dirs }}"
-  loop_control:
-    label: "{{ item.lv_name }}"
+    msg: |
+      Invalid YAML in filesystem_config:
+      {{ ansible_failed_result.msg | default('YAML parsing failed') }}
+  when: yaml_test is failed
 
-- name: Validate LV sizes are positive integers
+- name: Validate required fields in filesystem config
   ansible.builtin.fail:
-    msg: "Invalid size for LV {{ item.lv_name }}: {{ item.size_mb }}. Must be a positive integer."
-  when: 
-    - item.size_mb is not number or item.size_mb | int <= 0
-  loop: "{{ filesystem_dirs }}"
+    msg: "Missing required field '{{ item.1 }}' in filesystem entry {{ item.0 + 1 }}"
+  when: item.1 not in vars.filesystem_dirs[item.0]
+  with_indexed:
+    - "{{ filesystem_dirs }}"
   loop_control:
-    label: "{{ item.lv_name }}: {{ item.size_mb }}"
+    loop_var: item
+  vars:
+    required_fields:
+      - path
+      - lv_name
+      - size_mb
