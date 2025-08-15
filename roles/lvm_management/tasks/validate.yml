@@ -1,7 +1,5 @@
 ---
 # Enhanced tasks/validate.yml
-
-# Basic validation only
 - name: Check required variables
   ansible.builtin.fail:
     msg: "Missing required variable: {{ item }}"
@@ -72,14 +70,15 @@
 
 - name: Validate required fields in filesystem config
   ansible.builtin.fail:
-    msg: "Missing required field '{{ item.1 }}' in filesystem entry {{ item.0 + 1 }}"
-  when: item.1 not in vars.filesystem_dirs[item.0]
-  with_indexed:
-    - "{{ filesystem_dirs }}"
-  loop_control:
-    loop_var: item
+    msg: "Missing required field '{{ missing_field }}' in filesystem entry: {{ item }}"
+  when: missing_field is defined
+  loop: "{{ filesystem_dirs }}"
   vars:
-    required_fields:
-      - path
-      - lv_name
-      - size_mb
+    required_fields: ['path', 'lv_name', 'size_mb']
+    missing_field: "{{ required_fields | reject('in', item.keys()) | first | default(None) }}"
+
+- name: Validate size_mb is numeric
+  ansible.builtin.fail:
+    msg: "Invalid size_mb value '{{ item.size_mb }}' in LV '{{ item.lv_name }}'. Must be a number."
+  when: item.size_mb is not number
+  loop: "{{ filesystem_dirs }}"
