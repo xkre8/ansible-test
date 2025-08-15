@@ -11,15 +11,15 @@
 - name: Validate configuration
   ansible.builtin.include_tasks: validate.yml
 
-- name: Set target device
+- name: Set target device with auto-detection
   ansible.builtin.set_fact:
     target_device: >-
-      {%- if pv_strategy == 'use_existing_pv' -%}
-        {{ existing_pv_device }}
-      {%- elif manual_lvm_device != '' -%}
-        {{ manual_lvm_device }}
-      {%- elif selected_disk_name != '' -%}
-        {{ '/dev/' + selected_disk_name }}
+      {%- if target_device_input == '' -%}
+        
+      {%- elif target_device_input.startswith('/dev/') -%}
+        {{ target_device_input }}
+      {%- else -%}
+        {{ '/dev/' + target_device_input }}
       {%- endif -%}
 
 # === PHYSICAL VOLUME ===

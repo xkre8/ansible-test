@@ -11,12 +11,11 @@
   ansible.builtin.fail:
     msg: |
       Device required for {{ vg_strategy }} strategy!
-      Specify: selected_disk_name, manual_lvm_device, or existing_pv_device
+      Please specify device in 'Device/PV Path' field
+      Examples: sdb, /dev/sdc, /dev/nvme0n1
   when:
     - vg_strategy in ['create_new', 'extend_existing']
-    - selected_disk_name == ""
-    - manual_lvm_device == ""
-    - existing_pv_device == "" or pv_strategy != 'use_existing_pv'
+    - target_device_input == ""
 
 - name: Validate device exists
   ansible.builtin.stat:
@@ -41,3 +40,45 @@
   failed_when: vg_exists.rc == 0
   changed_when: false
   when: vg_strategy == 'create_new'
+
+# === SIZE VALIDATION ===
+- name: Get VG free space information
+  ansible.builtin.command: vgs --noheadings --units m "{{ volume_group_name }}" -o vg_free
+  register: vg_free_space
+  changed_when: false
+  failed_when: false
+  when: vg_strategy == 'use_existing'
+
+- name: Calculate total requested size
+  ansible.builtin.set_fact:
+    total_requested_mb: "{{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum }}"
+    vg_free_mb: "{{ vg_free_space.stdout | regex_replace('m', '') | int if vg_free_space.stdout is defined else 999999 }}"
+
+- name: Check if requested size exceeds available space
+  ansible.builtin.fail:
+    msg: |
+      ❌ INSUFFICIENT SPACE IN VOLUME GROUP!
+      
+      📊 Space Analysis:
+      - Volume Group: {{ volume_group_name }}
+      - Available Space: {{ vg_free_mb }}MB
+      - Requested Size: {{ total_requested_mb }}MB
+      - Shortage: {{ total_requested_mb | int - vg_free_mb | int }}MB
+      
+      📋 Requested Filesystems:
+      {% for fs in filesystem_dirs %}
+      - {{ fs.lv_name }}: {{ fs.size_mb }}MB ({{ fs.path }})
+      {% endfor %}
+      
+      💡 Solutions:
+      {% if vg_strategy == 'use_existing' %}
+      - Reduce size_mb values in filesystem configuration
+      - Change strategy to 'extend_existing' and add more disks
+      - Use 'vgs' command to check actual available space
+      {% else %}
+      - Use a larger disk
+      - Reduce size_mb values in filesystem configuration
+      {% endif %}
+  when:
+    - vg_strategy == 'use_existing'
+    - total_requested_mb | int > vg_free_mb | int
