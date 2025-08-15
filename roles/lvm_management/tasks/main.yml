@@ -22,59 +22,6 @@
         {{ '/dev/' + selected_disk_name }}
       {%- endif -%}
 
-# === SIZE VALIDATION ===
-- name: Get Volume Group size information
-  ansible.builtin.shell: |
-    if vgs --noheadings --units m "{{ volume_group_name }}" 2>/dev/null; then
-      vgs --noheadings --units m -o vg_free "{{ volume_group_name }}" | tr -d ' m'
-    else
-      # For new VG, get device size
-      if [ -b "{{ target_device }}" ]; then
-        lsblk -b -n -o SIZE "{{ target_device }}" | head -1 | awk '{print int($1/1024/1024)}'
-      else
-        echo "0"
-      fi
-    fi
-  register: available_space_check
-  changed_when: false
-  when: 
-    - filesystem_dirs | length > 0
-    - vg_strategy in ['create_new', 'extend_existing', 'use_existing']
-
-- name: Calculate total LV size needed
-  ansible.builtin.set_fact:
-    total_lv_size: "{{ filesystem_dirs | sum(attribute='size_mb') }}"
-    available_space: "{{ available_space_check.stdout | int }}"
-  when: filesystem_dirs | length > 0
-
-- name: Debug size information
-  ansible.builtin.debug:
-    msg: |
-      📊 STORAGE SPACE ANALYSIS:
-      Volume Group: {{ volume_group_name }}
-      Available Space: {{ available_space | default('N/A') }} MB
-      Total LV Size Needed: {{ total_lv_size | default('0') }} MB
-      Strategy: {{ vg_strategy }}
-      Target Device: {{ target_device | default('N/A') }}
-
-- name: Check if enough space available
-  ansible.builtin.fail:
-    msg: |
-      ❌ INSUFFICIENT SPACE!
-      
-      Available space: {{ available_space }} MB
-      Requested LV size: {{ total_lv_size }} MB
-      Shortage: {{ (total_lv_size | int) - (available_space | int) }} MB
-      
-      Please either:
-      1. Reduce LV sizes in filesystem_config
-      2. Use a larger device/VG
-      3. Add more PVs to extend the VG
-  when: 
-    - filesystem_dirs | length > 0
-    - available_space is defined
-    - (total_lv_size | int) > (available_space | int)
-
 # === PHYSICAL VOLUME ===
 - name: Create Physical Volume (if needed)
   ansible.builtin.command: pvcreate {{ target_device }}
@@ -92,6 +39,70 @@
     pvs: "{{ target_device }}"
     state: present
   when: vg_strategy in ['create_new', 'extend_existing']
+
+# === SIZE VALIDATION ===
+- name: Get Volume Group information
+  ansible.builtin.shell: |
+    vgs --noheadings --units m --options vg_name,vg_size,vg_free "{{ volume_group_name }}" | \
+    awk '{print "vg_name=" $1 ";vg_size_mb=" int($2) ";vg_free_mb=" int($3)}'
+  register: vg_info
+  changed_when: false
+  failed_when: vg_info.rc != 0
+
+- name: Parse VG information
+  ansible.builtin.set_fact:
+    vg_details: "{{ vg_info.stdout | regex_replace(';', '\n') | from_yaml }}"
+
+- name: Calculate total requested LV size
+  ansible.builtin.set_fact:
+    total_requested_mb: "{{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum }}"
+
+- name: Debug Volume Group and LV size information
+  ansible.builtin.debug:
+    msg: |
+      
+      🔍 VOLUME GROUP SIZE ANALYSIS
+      ============================
+      Volume Group: {{ vg_details.vg_name }}
+      Total VG Size: {{ vg_details.vg_size_mb }} MB
+      Available Free Space: {{ vg_details.vg_free_mb }} MB
+      
+      📊 LOGICAL VOLUMES REQUESTED
+      ============================
+      {% for lv in filesystem_dirs %}
+      - {{ lv.lv_name }}: {{ lv.size_mb }} MB ({{ lv.path }})
+      {% endfor %}
+      
+      📈 SIZE SUMMARY
+      ===============
+      Total Requested: {{ total_requested_mb }} MB
+      Available Space: {{ vg_details.vg_free_mb }} MB
+      {% if total_requested_mb|int > vg_details.vg_free_mb|int %}
+      ❌ INSUFFICIENT SPACE: Need {{ total_requested_mb|int - vg_details.vg_free_mb|int }} MB more!
+      {% else %}
+      ✅ SUFFICIENT SPACE: {{ vg_details.vg_free_mb|int - total_requested_mb|int }} MB will remain free
+      {% endif %}
+
+- name: Validate sufficient space for all LVs
+  ansible.builtin.fail:
+    msg: |
+      ❌ INSUFFICIENT SPACE IN VOLUME GROUP!
+      
+      Volume Group '{{ volume_group_name }}' has only {{ vg_details.vg_free_mb }} MB free,
+      but you requested {{ total_requested_mb }} MB total for logical volumes.
+      
+      You need {{ total_requested_mb|int - vg_details.vg_free_mb|int }} MB more space.
+      
+      Options:
+      1. Reduce the size of logical volumes in your configuration
+      2. Add more physical volumes to extend the volume group
+      3. Use a larger disk/device
+      
+      Current LV requests:
+      {% for lv in filesystem_dirs %}
+      - {{ lv.lv_name }}: {{ lv.size_mb }} MB
+      {% endfor %}
+  when: total_requested_mb|int > vg_details.vg_free_mb|int
 
 # === LOGICAL VOLUMES ===
 - name: Create Logical Volumes

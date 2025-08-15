@@ -1,42 +1,21 @@
 ---
 - name: Get comprehensive LVM information
   ansible.builtin.shell: |
-    echo "=== VOLUME GROUPS ==="
-    if vgs "{{ volume_group_name }}" 2>/dev/null; then
-      vgs "{{ volume_group_name }}"
-    else
-      echo "❌ VG '{{ volume_group_name }}' not found"
-    fi
+    echo "=== VOLUME GROUP DETAILS ==="
+    vgs --units m -o vg_name,vg_size,vg_free,vg_uuid "{{ volume_group_name }}" 2>/dev/null || echo "VG not found"
     echo ""
-    
     echo "=== PHYSICAL VOLUMES ==="
-    if pvs 2>/dev/null | grep "{{ volume_group_name }}"; then
-      pvs | grep "{{ volume_group_name }}"
-    else
-      echo "❌ No PVs found for VG '{{ volume_group_name }}'"
-    fi
+    pvs --units m -o pv_name,vg_name,pv_size,pv_free 2>/dev/null | grep "{{ volume_group_name }}" || echo "No PVs found"
     echo ""
-    
     echo "=== LOGICAL VOLUMES ==="
-    if lvs "{{ volume_group_name }}" 2>/dev/null; then
-      lvs "{{ volume_group_name }}"
-    else
-      echo "❌ No LVs found for VG '{{ volume_group_name }}'"
-    fi
+    lvs --units m -o lv_name,vg_name,lv_size,lv_path "{{ volume_group_name }}" 2>/dev/null || echo "No LVs found"
     echo ""
-    
     echo "=== MOUNT POINTS ==="
-    {% if filesystem_dirs | length > 0 %}
-    df -h {{ filesystem_dirs | map(attribute='path') | join(' ') }} 2>/dev/null || echo "❌ Mount info unavailable"
-    {% else %}
-    echo "❌ No filesystems configured"
-    {% endif %}
+    df -h {{ filesystem_dirs | map(attribute='path') | join(' ') }} 2>/dev/null || echo "Mount info unavailable"
     echo ""
-    
-    echo "=== DISK USAGE ==="
-    {% if filesystem_dirs | length > 0 %}
-    du -sh {{ filesystem_dirs | map(attribute='path') | join(' ') }} 2>/dev/null || echo "❌ Usage info unavailable"
-    {% endif %}
+    echo "=== SPACE UTILIZATION ==="
+    {% set total_lv_size = filesystem_dirs | map(attribute='size_mb') | map('int') | sum %}
+    echo "Total LV Space Allocated: {{ total_lv_size }} MB"
   register: lvm_info
   changed_when: false
   failed_when: false
@@ -45,14 +24,21 @@
   ansible.builtin.debug:
     msg: |
       
-      🎯 LVM SETUP COMPLETE! 
-      ========================
+      🎯 LVM SETUP COMPLETE!
+      ======================
       Strategy: {{ vg_strategy | upper }}
-      PV Strategy: {{ pv_strategy | upper }}
       Volume Group: {{ volume_group_name }}
-      Target Device: {{ target_device | default('N/A') }}
+      PV Strategy: {{ pv_strategy | upper }}
+      {% if target_device is defined %}
+      Target Device: {{ target_device }}
+      {% endif %}
       
-      📈 STORAGE DETAILS:
+      📦 CREATED LOGICAL VOLUMES
+      =========================
+      {% for lv in filesystem_dirs %}
+      ✅ {{ lv.lv_name }} → {{ lv.path }} ({{ lv.size_mb }} MB, {{ lv.fstype | default('xfs') }})
+      {% endfor %}
+      
       {{ lvm_info.stdout }}
       
-      ✅ Configuration Applied Successfully!
+      🚀 All filesystems are now mounted and ready for use!
