@@ -28,7 +28,7 @@
     - vg_strategy in ['create_new', 'extend_existing']
     - selected_disk_name == ""
     - manual_lvm_device == ""
-    - existing_pv_device == "" or pv_strategy != 'use_existing_pv'
+    - (pv_strategy != 'use_existing_pv' or existing_pv_device == "")
 
 - name: Set target device for validation
   ansible.builtin.set_fact:
