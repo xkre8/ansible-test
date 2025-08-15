@@ -1,24 +1,58 @@
 ---
-- name: Get LVM information
+- name: Get comprehensive LVM information
   ansible.builtin.shell: |
     echo "=== VOLUME GROUPS ==="
-    vgs "{{ volume_group_name }}" 2>/dev/null || echo "VG not found"
+    if vgs "{{ volume_group_name }}" 2>/dev/null; then
+      vgs "{{ volume_group_name }}"
+    else
+      echo "❌ VG '{{ volume_group_name }}' not found"
+    fi
     echo ""
+    
+    echo "=== PHYSICAL VOLUMES ==="
+    if pvs 2>/dev/null | grep "{{ volume_group_name }}"; then
+      pvs | grep "{{ volume_group_name }}"
+    else
+      echo "❌ No PVs found for VG '{{ volume_group_name }}'"
+    fi
+    echo ""
+    
     echo "=== LOGICAL VOLUMES ==="
-    lvs "{{ volume_group_name }}" 2>/dev/null || echo "No LVs found"
+    if lvs "{{ volume_group_name }}" 2>/dev/null; then
+      lvs "{{ volume_group_name }}"
+    else
+      echo "❌ No LVs found for VG '{{ volume_group_name }}'"
+    fi
     echo ""
+    
     echo "=== MOUNT POINTS ==="
-    df -h {{ filesystem_dirs | map(attribute='path') | join(' ') }} 2>/dev/null || echo "Mount info unavailable"
+    {% if filesystem_dirs | length > 0 %}
+    df -h {{ filesystem_dirs | map(attribute='path') | join(' ') }} 2>/dev/null || echo "❌ Mount info unavailable"
+    {% else %}
+    echo "❌ No filesystems configured"
+    {% endif %}
+    echo ""
+    
+    echo "=== DISK USAGE ==="
+    {% if filesystem_dirs | length > 0 %}
+    du -sh {{ filesystem_dirs | map(attribute='path') | join(' ') }} 2>/dev/null || echo "❌ Usage info unavailable"
+    {% endif %}
   register: lvm_info
   changed_when: false
   failed_when: false
 
-- name: Display LVM summary
+- name: Display comprehensive LVM summary
   ansible.builtin.debug:
     msg: |
       
-      🎯 LVM Setup Complete!
+      🎯 LVM SETUP COMPLETE! 
+      ========================
       Strategy: {{ vg_strategy | upper }}
+      PV Strategy: {{ pv_strategy | upper }}
       Volume Group: {{ volume_group_name }}
+      Target Device: {{ target_device | default('N/A') }}
       
+      📈 STORAGE DETAILS:
       {{ lvm_info.stdout }}
+      
+      ✅ Configuration Applied Successfully!

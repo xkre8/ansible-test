@@ -1,5 +1,5 @@
 ---
-# Basic validation only
+# Enhanced validation
 - name: Check required variables
   ansible.builtin.fail:
     msg: "Missing required variable: {{ item }}"
@@ -7,15 +7,39 @@
   loop:
     - volume_group_name
 
+- name: Validate filesystem configuration format
+  ansible.builtin.fail:
+    msg: "filesystem_config must be valid YAML and contain required fields (path, lv_name, size_mb)"
+  when: 
+    - filesystem_dirs is defined
+    - filesystem_dirs | length > 0
+    - item.path is not defined or item.lv_name is not defined or item.size_mb is not defined
+  loop: "{{ filesystem_dirs }}"
+
 - name: Check device is specified when needed
   ansible.builtin.fail:
     msg: |
       Device required for {{ vg_strategy }} strategy!
-      Please specify device in 'Device/PV Path' field
-      Examples: sdb, /dev/sdc, /dev/nvme0n1
+      Choose ONE of:
+      - selected_disk_name (disk name like 'sdb')
+      - manual_lvm_device (full path like '/dev/sdb1') 
+      - existing_pv_device (existing PV path)
   when:
     - vg_strategy in ['create_new', 'extend_existing']
-    - target_device_input == ""
+    - selected_disk_name == ""
+    - manual_lvm_device == ""
+    - existing_pv_device == "" or pv_strategy != 'use_existing_pv'
+
+- name: Set target device for validation
+  ansible.builtin.set_fact:
+    target_device: >-
+      {%- if pv_strategy == 'use_existing_pv' -%}
+        {{ existing_pv_device }}
+      {%- elif manual_lvm_device != '' -%}
+        {{ manual_lvm_device }}
+      {%- elif selected_disk_name != '' -%}
+        {{ '/dev/' + selected_disk_name }}
+      {%- endif -%}
 
 - name: Validate device exists
   ansible.builtin.stat:
@@ -26,6 +50,26 @@
     - target_device is defined
     - target_device != ""
     - vg_strategy in ['create_new', 'extend_existing']
+
+- name: Check if device is already a PV (for create_new_pv strategy)
+  ansible.builtin.command: pvs --noheadings "{{ target_device }}"
+  register: pv_exists
+  failed_when: false
+  changed_when: false
+  when: 
+    - pv_strategy == 'create_new_pv'
+    - target_device is defined
+    - target_device != ""
+
+- name: Fail if device is already a PV when creating new
+  ansible.builtin.fail:
+    msg: |
+      Device {{ target_device }} is already a Physical Volume!
+      Use pv_strategy: 'use_existing_pv' instead.
+  when:
+    - pv_strategy == 'create_new_pv'
+    - pv_exists is defined
+    - pv_exists.rc == 0
 
 - name: Check VG exists for use_existing strategy
   ansible.builtin.command: vgs --noheadings "{{ volume_group_name }}"
@@ -41,44 +85,11 @@
   changed_when: false
   when: vg_strategy == 'create_new'
 
-# === SIZE VALIDATION ===
-- name: Get VG free space information
-  ansible.builtin.command: vgs --noheadings --units m "{{ volume_group_name }}" -o vg_free
-  register: vg_free_space
+- name: Check existing PV is valid
+  ansible.builtin.command: pvs --noheadings "{{ existing_pv_device }}"
+  register: existing_pv_check
+  failed_when: existing_pv_check.rc != 0
   changed_when: false
-  failed_when: false
-  when: vg_strategy == 'use_existing'
-
-- name: Calculate total requested size
-  ansible.builtin.set_fact:
-    total_requested_mb: "{{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum }}"
-    vg_free_mb: "{{ vg_free_space.stdout | regex_replace('m', '') | int if vg_free_space.stdout is defined else 999999 }}"
-
-- name: Check if requested size exceeds available space
-  ansible.builtin.fail:
-    msg: |
-      ❌ INSUFFICIENT SPACE IN VOLUME GROUP!
-      
-      📊 Space Analysis:
-      - Volume Group: {{ volume_group_name }}
-      - Available Space: {{ vg_free_mb }}MB
-      - Requested Size: {{ total_requested_mb }}MB
-      - Shortage: {{ total_requested_mb | int - vg_free_mb | int }}MB
-      
-      📋 Requested Filesystems:
-      {% for fs in filesystem_dirs %}
-      - {{ fs.lv_name }}: {{ fs.size_mb }}MB ({{ fs.path }})
-      {% endfor %}
-      
-      💡 Solutions:
-      {% if vg_strategy == 'use_existing' %}
-      - Reduce size_mb values in filesystem configuration
-      - Change strategy to 'extend_existing' and add more disks
-      - Use 'vgs' command to check actual available space
-      {% else %}
-      - Use a larger disk
-      - Reduce size_mb values in filesystem configuration
-      {% endif %}
   when:
-    - vg_strategy == 'use_existing'
-    - total_requested_mb | int > vg_free_mb | int
+    - pv_strategy == 'use_existing_pv'
+    - existing_pv_device != ""

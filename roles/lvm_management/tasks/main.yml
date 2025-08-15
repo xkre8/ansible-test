@@ -11,16 +11,69 @@
 - name: Validate configuration
   ansible.builtin.include_tasks: validate.yml
 
-- name: Set target device with auto-detection
+- name: Set target device
   ansible.builtin.set_fact:
     target_device: >-
-      {%- if target_device_input == '' -%}
-        
-      {%- elif target_device_input.startswith('/dev/') -%}
-        {{ target_device_input }}
-      {%- else -%}
-        {{ '/dev/' + target_device_input }}
+      {%- if pv_strategy == 'use_existing_pv' -%}
+        {{ existing_pv_device }}
+      {%- elif manual_lvm_device != '' -%}
+        {{ manual_lvm_device }}
+      {%- elif selected_disk_name != '' -%}
+        {{ '/dev/' + selected_disk_name }}
       {%- endif -%}
+
+# === SIZE VALIDATION ===
+- name: Get Volume Group size information
+  ansible.builtin.shell: |
+    if vgs --noheadings --units m "{{ volume_group_name }}" 2>/dev/null; then
+      vgs --noheadings --units m -o vg_free "{{ volume_group_name }}" | tr -d ' m'
+    else
+      # For new VG, get device size
+      if [ -b "{{ target_device }}" ]; then
+        lsblk -b -n -o SIZE "{{ target_device }}" | head -1 | awk '{print int($1/1024/1024)}'
+      else
+        echo "0"
+      fi
+    fi
+  register: available_space_check
+  changed_when: false
+  when: 
+    - filesystem_dirs | length > 0
+    - vg_strategy in ['create_new', 'extend_existing', 'use_existing']
+
+- name: Calculate total LV size needed
+  ansible.builtin.set_fact:
+    total_lv_size: "{{ filesystem_dirs | sum(attribute='size_mb') }}"
+    available_space: "{{ available_space_check.stdout | int }}"
+  when: filesystem_dirs | length > 0
+
+- name: Debug size information
+  ansible.builtin.debug:
+    msg: |
+      📊 STORAGE SPACE ANALYSIS:
+      Volume Group: {{ volume_group_name }}
+      Available Space: {{ available_space | default('N/A') }} MB
+      Total LV Size Needed: {{ total_lv_size | default('0') }} MB
+      Strategy: {{ vg_strategy }}
+      Target Device: {{ target_device | default('N/A') }}
+
+- name: Check if enough space available
+  ansible.builtin.fail:
+    msg: |
+      ❌ INSUFFICIENT SPACE!
+      
+      Available space: {{ available_space }} MB
+      Requested LV size: {{ total_lv_size }} MB
+      Shortage: {{ (total_lv_size | int) - (available_space | int) }} MB
+      
+      Please either:
+      1. Reduce LV sizes in filesystem_config
+      2. Use a larger device/VG
+      3. Add more PVs to extend the VG
+  when: 
+    - filesystem_dirs | length > 0
+    - available_space is defined
+    - (total_lv_size | int) > (available_space | int)
 
 # === PHYSICAL VOLUME ===
 - name: Create Physical Volume (if needed)
