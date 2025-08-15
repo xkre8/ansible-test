@@ -4,8 +4,10 @@ vg_strategy: "create_new"  # create_new, use_existing, extend_existing
 pv_strategy: "create_new_pv"  # create_new_pv, use_existing_pv
 volume_group_name: "vg_data"
 
-# Device variables (set by survey) - SIMPLIFIED!
-target_device_input: ""  # Single field for all device inputs
+# Device variables (from survey)
+selected_disk_name: ""  # disk name like 'sdc', 'sdd'
+manual_lvm_device: ""   # full path like '/dev/sdc'
+existing_pv_device: ""  # existing PV path
 
 # Filesystem configuration (YAML string from survey)
 filesystem_config: |
