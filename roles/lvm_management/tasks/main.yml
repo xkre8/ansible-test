@@ -6,12 +6,7 @@
 
 - name: Parse filesystem configuration
   ansible.builtin.set_fact:
-    filesystem_dirs: "{{ (filesystem_config | from_yaml) if filesystem_config is defined and filesystem_config != '' else [] }}"
-
-- name: Validate filesystem_dirs is not empty
-  ansible.builtin.fail:
-    msg: "No filesystem configuration provided or invalid YAML format"
-  when: filesystem_dirs | length == 0
+    filesystem_dirs: "{{ (filesystem_config | from_yaml) if filesystem_config is defined else [] }}"
 
 - name: Validate configuration
   ansible.builtin.include_tasks: validate.yml

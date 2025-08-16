@@ -9,14 +9,7 @@ selected_disk_name: ""
 manual_lvm_device: ""
 existing_pv_device: ""
 
-# Filesystem configuration - using proper YAML list format
-filesystem_dirs:
-  - path: /data
-    lv_name: lv_data
-    size_mb: 5000
-    fstype: xfs
-
-# Alternative: Keep filesystem_config for survey compatibility
+# Filesystem configuration (YAML string from survey)
 filesystem_config: |
   - path: /data
     lv_name: lv_data
