@@ -1,39 +1,24 @@
 ---
-# Enhanced tasks/summary.yml
-
-- name: Get comprehensive LVM information
+- name: Get LVM information
   ansible.builtin.shell: |
-    echo "=== VOLUME GROUP DETAILS ==="
-    vgs "{{ volume_group_name }}" --units m -o vg_name,vg_size,vg_free,vg_used,pv_count 2>/dev/null || echo "VG not found"
-    echo ""
-    echo "=== PHYSICAL VOLUMES ==="
-    pvs --select vg_name="{{ volume_group_name }}" -o pv_name,pv_size,pv_used,pv_free 2>/dev/null || echo "No PVs found"
+    echo "=== VOLUME GROUPS ==="
+    vgs "{{ volume_group_name }}" 2>/dev/null || echo "VG not found"
     echo ""
     echo "=== LOGICAL VOLUMES ==="
-    lvs "{{ volume_group_name }}" --units m -o lv_name,lv_size,lv_path 2>/dev/null || echo "No LVs found"
+    lvs "{{ volume_group_name }}" 2>/dev/null || echo "No LVs found"
     echo ""
     echo "=== MOUNT POINTS ==="
     df -h {{ filesystem_dirs | map(attribute='path') | join(' ') }} 2>/dev/null || echo "Mount info unavailable"
-    echo ""
-    echo "=== SIZE SUMMARY ==="
-    echo "Total LV space allocated: {{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum }} MB"
   register: lvm_info
   changed_when: false
   failed_when: false
 
-- name: Display comprehensive LVM summary
+- name: Display LVM summary
   ansible.builtin.debug:
     msg: |
       
       🎯 LVM Setup Complete!
-      ======================
       Strategy: {{ vg_strategy | upper }}
       Volume Group: {{ volume_group_name }}
-      Device: {{ target_device | default('N/A') }}
-      
-      📊 Configuration Applied:
-      {% for lv in filesystem_dirs %}
-      • {{ lv.lv_name }}: {{ lv.size_mb }} MB → {{ lv.path }} ({{ lv.fstype }})
-      {% endfor %}
       
       {{ lvm_info.stdout }}

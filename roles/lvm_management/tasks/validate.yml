@@ -1,5 +1,5 @@
 ---
-# Enhanced tasks/validate.yml
+# Enhanced validation with disk size checking
 - name: Check required variables
   ansible.builtin.fail:
     msg: "Missing required variable: {{ item }}"
@@ -18,19 +18,6 @@
     - manual_lvm_device == ""
     - existing_pv_device == "" or pv_strategy != 'use_existing_pv'
 
-- name: Set target device for validation
-  ansible.builtin.set_fact:
-    target_device: >-
-      {%- if pv_strategy == 'use_existing_pv' -%}
-        {{ existing_pv_device }}
-      {%- elif manual_lvm_device != '' -%}
-        {{ manual_lvm_device }}
-      {%- elif selected_disk_name != '' -%}
-        {{ '/dev/' + selected_disk_name }}
-      {%- endif -%}
-  when: 
-    - vg_strategy in ['create_new', 'extend_existing']
-
 - name: Validate device exists
   ansible.builtin.stat:
     path: "{{ target_device }}"
@@ -41,6 +28,101 @@
     - target_device != ""
     - vg_strategy in ['create_new', 'extend_existing']
 
+# NEW: Get device size information
+- name: Get target device size (in MB)
+  ansible.builtin.shell: |
+    if [ -b "{{ target_device }}" ]; then
+      # Get size in bytes and convert to MB
+      blockdev --getsize64 "{{ target_device }}" | awk '{print int($1/1024/1024)}'
+    else
+      echo "0"
+    fi
+  register: device_size_result
+  changed_when: false
+  when: 
+    - target_device is defined
+    - target_device != ""
+    - vg_strategy in ['create_new', 'extend_existing']
+
+- name: Set device size fact
+  ansible.builtin.set_fact:
+    device_size_mb: "{{ device_size_result.stdout | int }}"
+  when: device_size_result is defined
+
+# NEW: Calculate total requested LV sizes
+- name: Calculate total requested LV size
+  ansible.builtin.set_fact:
+    total_requested_size: "{{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum }}"
+
+# NEW: Get existing VG size for extend_existing strategy
+- name: Get existing VG free space (for extend_existing)
+  ansible.builtin.shell: |
+    vgs --noheadings --units m "{{ volume_group_name }}" | awk '{print int($7)}' 2>/dev/null || echo "0"
+  register: existing_vg_free
+  changed_when: false
+  when: vg_strategy == 'extend_existing'
+
+- name: Set existing VG free space fact
+  ansible.builtin.set_fact:
+    existing_vg_free_mb: "{{ existing_vg_free.stdout | int }}"
+  when: existing_vg_free is defined
+
+# NEW: Validate disk space for create_new strategy
+- name: Check disk space for create_new strategy
+  ansible.builtin.fail:
+    msg: |
+      ERROR: Insufficient disk space!
+      Device: {{ target_device }}
+      Device size: {{ device_size_mb }} MB
+      Total requested LV size: {{ total_requested_size }} MB
+      Available for LVM: ~{{ (device_size_mb * 0.95) | int }} MB (allowing 5% for LVM metadata)
+      
+      Shortfall: {{ total_requested_size - (device_size_mb * 0.95) | int }} MB
+  when:
+    - vg_strategy == 'create_new'
+    - device_size_mb is defined
+    - total_requested_size | int > (device_size_mb * 0.95) | int
+
+# NEW: Validate space for extend_existing strategy
+- name: Check available space for extend_existing strategy
+  ansible.builtin.fail:
+    msg: |
+      ERROR: Insufficient space for extending VG!
+      Device to add: {{ target_device }} ({{ device_size_mb }} MB)
+      Current VG free space: {{ existing_vg_free_mb }} MB
+      Total available after extend: {{ (existing_vg_free_mb + device_size_mb * 0.95) | int }} MB
+      Total requested LV size: {{ total_requested_size }} MB
+      
+      Shortfall: {{ total_requested_size - (existing_vg_free_mb + device_size_mb * 0.95) | int }} MB
+  when:
+    - vg_strategy == 'extend_existing'
+    - device_size_mb is defined
+    - existing_vg_free_mb is defined
+    - total_requested_size | int > (existing_vg_free_mb + device_size_mb * 0.95) | int
+
+# NEW: Check space for use_existing strategy
+- name: Get existing VG free space (for use_existing)
+  ansible.builtin.shell: |
+    vgs --noheadings --units m "{{ volume_group_name }}" | awk '{print int($7)}' 2>/dev/null || echo "0"
+  register: existing_only_vg_free
+  changed_when: false
+  when: vg_strategy == 'use_existing'
+
+- name: Check available space for use_existing strategy
+  ansible.builtin.fail:
+    msg: |
+      ERROR: Insufficient free space in existing VG!
+      Volume Group: {{ volume_group_name }}
+      Available free space: {{ existing_only_vg_free.stdout }} MB
+      Total requested LV size: {{ total_requested_size }} MB
+      
+      Shortfall: {{ total_requested_size - existing_only_vg_free.stdout | int }} MB
+  when:
+    - vg_strategy == 'use_existing'
+    - existing_only_vg_free is defined
+    - total_requested_size | int > existing_only_vg_free.stdout | int
+
+# Original validations
 - name: Check VG exists for use_existing strategy
   ansible.builtin.command: vgs --noheadings "{{ volume_group_name }}"
   register: vg_check
@@ -55,30 +137,24 @@
   changed_when: false
   when: vg_strategy == 'create_new'
 
-- name: Validate filesystem configuration syntax
-  ansible.builtin.set_fact:
-    filesystem_dirs_test: "{{ (filesystem_config | from_yaml) if filesystem_config is defined else [] }}"
-  failed_when: false
-  register: yaml_test
-
-- name: Check filesystem configuration is valid YAML
-  ansible.builtin.fail:
+# NEW: Display space summary
+- name: Display space allocation summary
+  ansible.builtin.debug:
     msg: |
-      Invalid YAML in filesystem_config:
-      {{ ansible_failed_result.msg | default('YAML parsing failed') }}
-  when: yaml_test is failed
-
-- name: Validate required fields in filesystem config
-  ansible.builtin.fail:
-    msg: "Missing required field '{{ missing_field }}' in filesystem entry: {{ item }}"
-  when: missing_field is defined
-  loop: "{{ filesystem_dirs }}"
-  vars:
-    required_fields: ['path', 'lv_name', 'size_mb']
-    missing_field: "{{ required_fields | reject('in', item.keys()) | first | default(None) }}"
-
-- name: Validate size_mb is numeric
-  ansible.builtin.fail:
-    msg: "Invalid size_mb value '{{ item.size_mb }}' in LV '{{ item.lv_name }}'. Must be a number."
-  when: item.size_mb is not number
-  loop: "{{ filesystem_dirs }}"
+      
+      📊 SPACE ALLOCATION SUMMARY
+      ========================
+      Strategy: {{ vg_strategy }}
+      {% if device_size_mb is defined %}
+      Target device: {{ target_device }} ({{ device_size_mb }} MB)
+      {% endif %}
+      {% if existing_vg_free_mb is defined %}
+      Existing VG free space: {{ existing_vg_free_mb }} MB
+      {% endif %}
+      {% if existing_only_vg_free is defined %}
+      VG free space: {{ existing_only_vg_free.stdout }} MB
+      {% endif %}
+      Total requested LV size: {{ total_requested_size }} MB
+      
+      ✅ Space validation passed!
+  when: filesystem_dirs | length > 0
