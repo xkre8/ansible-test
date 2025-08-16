@@ -40,6 +40,70 @@
     state: present
   when: vg_strategy in ['create_new', 'extend_existing']
 
+# === SIZE VALIDATION ===
+- name: Get Volume Group size information
+  ansible.builtin.command: vgs --noheadings --units m "{{ volume_group_name }}" -o vg_size,vg_free
+  register: vg_size_info
+  changed_when: false
+
+- name: Parse VG size information
+  ansible.builtin.set_fact:
+    vg_total_mb: "{{ vg_size_info.stdout.split()[0] | regex_replace('m', '') | int }}"
+    vg_free_mb: "{{ vg_size_info.stdout.split()[1] | regex_replace('m', '') | int }}"
+    total_requested_mb: "{{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum }}"
+
+- name: Debug size information
+  ansible.builtin.debug:
+    msg: |
+      📊 Volume Group Size Analysis:
+      
+      VG Name: {{ volume_group_name }}
+      Total Size: {{ vg_total_mb }} MB
+      Free Space: {{ vg_free_mb }} MB
+      
+      Requested LVs:
+      {% for item in filesystem_dirs %}
+      - {{ item.lv_name }}: {{ item.size_mb }} MB ({{ item.path }})
+      {% endfor %}
+      
+      Total Requested: {{ total_requested_mb }} MB
+      Space After: {{ vg_free_mb - total_requested_mb }} MB
+      
+      {% if total_requested_mb > vg_free_mb %}
+      ❌ INSUFFICIENT SPACE!
+      Need {{ total_requested_mb - vg_free_mb }} MB more
+      {% else %}
+      ✅ Sufficient space available
+      {% endif %}
+
+- name: Fail if insufficient space
+  ansible.builtin.fail:
+    msg: |
+      ❌ INSUFFICIENT SPACE IN VOLUME GROUP!
+      
+      Volume Group: {{ volume_group_name }}
+      Available Space: {{ vg_free_mb }} MB
+      Requested Space: {{ total_requested_mb }} MB
+      Shortage: {{ total_requested_mb - vg_free_mb }} MB
+      
+      💡 Solutions:
+      {% if vg_strategy == 'use_existing' %}
+      - Reduce LV sizes in filesystem_config
+      - Change strategy to 'extend_existing' and add more disks
+      {% elif vg_strategy == 'extend_existing' %}
+      - Add a larger disk
+      - Reduce LV sizes in filesystem_config
+      {% else %}
+      - Use a larger disk
+      - Reduce LV sizes in filesystem_config
+      {% endif %}
+      
+      📋 Current LV requests:
+      {% for item in filesystem_dirs %}
+      - {{ item.lv_name }}: {{ item.size_mb }} MB
+      {% endfor %}
+  when: total_requested_mb > vg_free_mb
+
 # === LOGICAL VOLUMES ===
 - name: Create Logical Volumes
   community.general.lvol:
