@@ -4,53 +4,43 @@
     name: lvm2
     state: present
 
-# Fixed YAML parsing with proper validation
-- name: Debug filesystem_config raw input
-  ansible.builtin.debug:
-    var: filesystem_config
-    verbosity: 1
-
-- name: Validate filesystem_config is not empty
+- name: Validate filesystem_config is provided
   ansible.builtin.fail:
-    msg: "filesystem_config cannot be empty"
+    msg: |
+      filesystem_config is required and cannot be empty.
+      Please provide valid YAML configuration in survey.
   when: 
-    - filesystem_config is not defined or filesystem_config == ""
+    - filesystem_config is not defined or filesystem_config == "" or filesystem_config is none
 
-- name: Parse filesystem configuration safely
+- name: Debug filesystem_config (verbose mode)
+  ansible.builtin.debug:
+    msg: |
+      Raw filesystem_config:
+      {{ filesystem_config }}
+  when: ansible_verbosity >= 1
+
+- name: Parse filesystem configuration
   ansible.builtin.set_fact:
     filesystem_dirs: "{{ filesystem_config | from_yaml }}"
-  rescue:
-    - name: Show YAML parsing error
-      ansible.builtin.debug:
-        msg: |
-          ERROR: Failed to parse filesystem_config as YAML
-          Raw content: {{ filesystem_config }}
-          
-    - name: Fail with helpful message
-      ansible.builtin.fail:
-        msg: |
-          filesystem_config contains invalid YAML syntax.
-          Please check your YAML format in the survey.
-          
-          Expected format:
-          - path: /data
-            lv_name: lv_data
-            size_mb: 5000
-            fstype: xfs
 
 - name: Validate parsed filesystem configuration
   ansible.builtin.fail:
-    msg: "filesystem_dirs must be a non-empty list"
+    msg: |
+      Invalid filesystem configuration format.
+      filesystem_dirs must be a non-empty list.
+      Current value: {{ filesystem_dirs }}
   when: 
-    - filesystem_dirs is not defined 
-    - filesystem_dirs | length == 0
-    - filesystem_dirs is not iterable
+    - filesystem_dirs is not defined or filesystem_dirs is not iterable or filesystem_dirs | length == 0
 
-- name: Validate each filesystem entry
+- name: Validate required fields in each filesystem entry
   ansible.builtin.fail:
-    msg: "Missing required field '{{ item.0 }}' in filesystem entry {{ item.1 }}"
+    msg: |
+      Missing required field '{{ item.0 }}' in filesystem entry: {{ item.1 }}
+      Required fields: path, lv_name, size_mb
   when: item.0 not in item.1
-  loop: "{{ ['path', 'lv_name', 'size_mb'] | product(filesystem_dirs) | list }}"
+  loop: "{{ required_fields | product(filesystem_dirs) | list }}"
+  vars:
+    required_fields: ['path', 'lv_name', 'size_mb']
 
 - name: Validate configuration
   ansible.builtin.include_tasks: validate.yml
