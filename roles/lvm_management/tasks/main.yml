@@ -4,9 +4,53 @@
     name: lvm2
     state: present
 
-- name: Parse filesystem configuration
+# Fixed YAML parsing with proper validation
+- name: Debug filesystem_config raw input
+  ansible.builtin.debug:
+    var: filesystem_config
+    verbosity: 1
+
+- name: Validate filesystem_config is not empty
+  ansible.builtin.fail:
+    msg: "filesystem_config cannot be empty"
+  when: 
+    - filesystem_config is not defined or filesystem_config == ""
+
+- name: Parse filesystem configuration safely
   ansible.builtin.set_fact:
-    filesystem_dirs: "{{ (filesystem_config | from_yaml) if filesystem_config is defined else [] }}"
+    filesystem_dirs: "{{ filesystem_config | from_yaml }}"
+  rescue:
+    - name: Show YAML parsing error
+      ansible.builtin.debug:
+        msg: |
+          ERROR: Failed to parse filesystem_config as YAML
+          Raw content: {{ filesystem_config }}
+          
+    - name: Fail with helpful message
+      ansible.builtin.fail:
+        msg: |
+          filesystem_config contains invalid YAML syntax.
+          Please check your YAML format in the survey.
+          
+          Expected format:
+          - path: /data
+            lv_name: lv_data
+            size_mb: 5000
+            fstype: xfs
+
+- name: Validate parsed filesystem configuration
+  ansible.builtin.fail:
+    msg: "filesystem_dirs must be a non-empty list"
+  when: 
+    - filesystem_dirs is not defined 
+    - filesystem_dirs | length == 0
+    - filesystem_dirs is not iterable
+
+- name: Validate each filesystem entry
+  ansible.builtin.fail:
+    msg: "Missing required field '{{ item.0 }}' in filesystem entry {{ item.1 }}"
+  when: item.0 not in item.1
+  loop: "{{ ['path', 'lv_name', 'size_mb'] | product(filesystem_dirs) | list }}"
 
 - name: Validate configuration
   ansible.builtin.include_tasks: validate.yml
