@@ -4,9 +4,39 @@
     name: lvm2
     state: present
 
-- name: Parse filesystem configuration
-  ansible.builtin.set_fact:
-    filesystem_dirs: "{{ (filesystem_config | from_yaml) if filesystem_config is defined else [] }}"
+- name: Debug raw filesystem_config input
+  ansible.builtin.debug:
+    msg: |
+      🔍 Raw filesystem_config:
+      {{ filesystem_config | default('NOT_SET') }}
+
+- name: Parse filesystem configuration with error handling
+  block:
+    - name: Parse YAML configuration
+      ansible.builtin.set_fact:
+        filesystem_dirs: "{{ filesystem_config | from_yaml }}"
+      when: 
+        - filesystem_config is defined
+        - filesystem_config != ""
+
+    - name: Set empty list if no configuration
+      ansible.builtin.set_fact:
+        filesystem_dirs: []
+      when: filesystem_config is not defined or filesystem_config == ""
+
+  rescue:
+    - name: Fail with YAML parsing error
+      ansible.builtin.fail:
+        msg: |
+          ❌ Invalid YAML in filesystem_config!
+          
+          Raw input: {{ filesystem_config }}
+          
+          Expected format:
+          - path: /data
+            lv_name: lv_data
+            size_mb: 2000
+            fstype: xfs
 
 - name: Debug filesystem configuration
   ansible.builtin.debug:
