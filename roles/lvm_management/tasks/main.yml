@@ -8,6 +8,53 @@
   ansible.builtin.set_fact:
     filesystem_dirs: "{{ (filesystem_config | from_yaml) if filesystem_config is defined else [] }}"
 
+- name: Debug filesystem configuration
+  ansible.builtin.debug:
+    msg: |
+      🔍 Filesystem Configuration Debug:
+      {% for fs in filesystem_dirs %}
+      {{ loop.index }}. Path: {{ fs.path }}
+         LV: {{ fs.lv_name }}
+         Size: {{ fs.size_mb }}MB
+         FS: {{ fs.fstype | default('xfs') }}
+      {% endfor %}
+
+- name: Check for duplicate paths
+  ansible.builtin.fail:
+    msg: |
+      ❌ Duplicate mount paths detected!
+      
+      Duplicates found: {{ filesystem_dirs | map(attribute='path') | list | select('equalto', item) | list | length }}x {{ item }}
+      
+      Each mount path must be unique!
+  when: (filesystem_dirs | map(attribute='path') | list).count(item) > 1
+  loop: "{{ filesystem_dirs | map(attribute='path') | unique | list }}"
+
+- name: Check for duplicate LV names
+  ansible.builtin.fail:
+    msg: |
+      ❌ Duplicate Logical Volume names detected!
+      
+      Duplicates found: {{ filesystem_dirs | map(attribute='lv_name') | list | select('equalto', item) | list | length }}x {{ item }}
+      
+      Each LV name must be unique!
+  when: (filesystem_dirs | map(attribute='lv_name') | list).count(item) > 1
+  loop: "{{ filesystem_dirs | map(attribute='lv_name') | unique | list }}"
+
+- name: Calculate total requested LV size
+  ansible.builtin.set_fact:
+    total_requested_mb: "{{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum }}"
+
+- name: Display size calculation
+  ansible.builtin.debug:
+    msg: |
+      📊 LV Size Calculation:
+      {% for fs in filesystem_dirs %}
+      - {{ fs.lv_name }}: {{ fs.size_mb }}MB
+      {% endfor %}
+      
+      📈 Total Requested: {{ total_requested_mb }}MB ({{ (total_requested_mb | int / 1024) | round(2) }}GB)
+
 - name: Validate configuration
   ansible.builtin.include_tasks: validate.yml
 
@@ -39,6 +86,67 @@
     pvs: "{{ target_device }}"
     state: present
   when: vg_strategy in ['create_new', 'extend_existing']
+
+# === SIZE VALIDATION ===
+- name: Get Volume Group size information
+  ansible.builtin.command: vgs --noheadings --units m "{{ volume_group_name }}" -o vg_size,vg_free
+  register: vg_size_info
+  changed_when: false
+  when: filesystem_dirs | length > 0
+
+- name: Parse VG size information
+  ansible.builtin.set_fact:
+    vg_total_mb: "{{ vg_size_info.stdout.split()[0] | regex_replace('[^0-9]', '') | int }}"
+    vg_free_mb: "{{ vg_size_info.stdout.split()[1] | regex_replace('[^0-9]', '') | int }}"
+  when: vg_size_info is defined
+
+- name: Display Volume Group information
+  ansible.builtin.debug:
+    msg: |
+      📦 Volume Group: {{ volume_group_name }}
+      💾 Total Size: {{ vg_total_mb }}MB ({{ (vg_total_mb | int / 1024) | round(2) }}GB)
+      🆓 Free Space: {{ vg_free_mb }}MB ({{ (vg_free_mb | int / 1024) | round(2) }}GB)
+      📊 Requested: {{ total_requested_mb }}MB ({{ (total_requested_mb | int / 1024) | round(2) }}GB)
+      
+      {% if (total_requested_mb | int) > (vg_free_mb | int) %}
+      ❌ INSUFFICIENT SPACE!
+      📉 Short by: {{ (total_requested_mb | int) - (vg_free_mb | int) }}MB
+      {% else %}
+      ✅ Sufficient space available
+      📊 Remaining: {{ (vg_free_mb | int) - (total_requested_mb | int) }}MB
+      {% endif %}
+  when: vg_size_info is defined
+
+- name: Validate sufficient space in Volume Group
+  ansible.builtin.fail:
+    msg: |
+      ❌ INSUFFICIENT SPACE IN VOLUME GROUP!
+      
+      📦 Volume Group: {{ volume_group_name }}
+      💾 Total VG Size: {{ vg_total_mb }}MB ({{ (vg_total_mb | int / 1024) | round(2) }}GB)
+      🆓 Available Space: {{ vg_free_mb }}MB ({{ (vg_free_mb | int / 1024) | round(2) }}GB)
+      
+      📊 Requested LVs:
+      {% for fs in filesystem_dirs %}
+      - {{ fs.lv_name }}: {{ fs.size_mb }}MB
+      {% endfor %}
+      
+      📈 Total Requested: {{ total_requested_mb }}MB ({{ (total_requested_mb | int / 1024) | round(2) }}GB)
+      📉 Space Shortage: {{ (total_requested_mb | int) - (vg_free_mb | int) }}MB
+      
+      💡 Solutions:
+      {% if vg_strategy == 'use_existing' %}
+      - Reduce LV sizes in filesystem_config
+      - Change strategy to 'extend_existing' and add more disks
+      - Free up space in existing VG
+      {% elif vg_strategy in ['create_new', 'extend_existing'] %}
+      - Use larger disk(s)
+      - Reduce LV sizes in filesystem_config
+      - Add multiple disks
+      {% endif %}
+  when:
+    - vg_size_info is defined
+    - (total_requested_mb | int) > (vg_free_mb | int)
 
 # === LOGICAL VOLUMES ===
 - name: Create Logical Volumes
