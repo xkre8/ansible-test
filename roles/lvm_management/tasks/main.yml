@@ -117,7 +117,7 @@
     state: present
   when: vg_strategy in ['create_new', 'extend_existing']
 
-# === SIZE VALIDATION ===
+# === SIZE VALIDATION (ย้ายมาก่อนสร้าง LV) ===
 - name: Get Volume Group size information
   ansible.builtin.command: vgs --noheadings --units m "{{ volume_group_name }}" -o vg_size,vg_free
   register: vg_size_info
@@ -139,7 +139,7 @@
       📊 Requested: {{ total_requested_mb }}MB ({{ (total_requested_mb | int / 1024) | round(2) }}GB)
       
       {% if (total_requested_mb | int) > (vg_free_mb | int) %}
-      ❌ INSUFFICIENT SPACE!
+      ❌ INSUFFICIENT SPACE - WILL NOT CREATE ANY LVs!
       📉 Short by: {{ (total_requested_mb | int) - (vg_free_mb | int) }}MB
       {% else %}
       ✅ Sufficient space available
@@ -147,38 +147,43 @@
       {% endif %}
   when: vg_size_info is defined
 
-- name: Validate sufficient space in Volume Group
+- name: PRE-FLIGHT CHECK - Stop execution if total size exceeds available space
   ansible.builtin.fail:
     msg: |
-      ❌ INSUFFICIENT SPACE IN VOLUME GROUP!
+      🚨 PRE-FLIGHT CHECK FAILED: TOTAL LV SIZE EXCEEDS AVAILABLE SPACE!
       
       📦 Volume Group: {{ volume_group_name }}
       💾 Total VG Size: {{ vg_total_mb }}MB ({{ (vg_total_mb | int / 1024) | round(2) }}GB)
       🆓 Available Space: {{ vg_free_mb }}MB ({{ (vg_free_mb | int / 1024) | round(2) }}GB)
       
-      📊 Requested LVs:
+      📊 Requested Logical Volumes:
       {% for fs in filesystem_dirs %}
-      - {{ fs.lv_name }}: {{ fs.size_mb }}MB
+      {{ loop.index }}. {{ fs.lv_name }}: {{ fs.size_mb }}MB ({{ (fs.size_mb | int / 1024) | round(2) }}GB) → {{ fs.path }}
       {% endfor %}
       
       📈 Total Requested: {{ total_requested_mb }}MB ({{ (total_requested_mb | int / 1024) | round(2) }}GB)
-      📉 Space Shortage: {{ (total_requested_mb | int) - (vg_free_mb | int) }}MB
+      📉 Space Shortage: {{ (total_requested_mb | int) - (vg_free_mb | int) }}MB ({{ ((total_requested_mb | int - vg_free_mb | int) / 1024) | round(2) }}GB)
+      
+      🚫 NO LOGICAL VOLUMES WILL BE CREATED TO PREVENT PARTIAL DEPLOYMENT!
       
       💡 Solutions:
       {% if vg_strategy == 'use_existing' %}
-      - Reduce LV sizes in filesystem_config
-      - Change strategy to 'extend_existing' and add more disks
-      - Free up space in existing VG
+      1. Reduce total LV sizes in filesystem_config
+      2. Change strategy to 'extend_existing' and add more disks  
+      3. Free up existing space in VG: {{ volume_group_name }}
       {% elif vg_strategy in ['create_new', 'extend_existing'] %}
-      - Use larger disk(s)
-      - Reduce LV sizes in filesystem_config
-      - Add multiple disks
+      1. Use larger disk(s) - need at least {{ ((total_requested_mb | int / 1024) | round(1) }}GB
+      2. Reduce total LV sizes in filesystem_config
+      3. Split across multiple Volume Groups
       {% endif %}
+      
+      ⚠️  NO CHANGES MADE TO PREVENT PARTIAL DEPLOYMENT
+      Current VG Status: {{ vg_free_mb }}MB available, {{ total_requested_mb }}MB needed
   when:
     - vg_size_info is defined
     - (total_requested_mb | int) > (vg_free_mb | int)
 
-# === LOGICAL VOLUMES ===
+# === LOGICAL VOLUMES (ย้ายมาหลังการตรวจสอบ) ===
 - name: Create Logical Volumes
   community.general.lvol:
     vg: "{{ volume_group_name }}"
