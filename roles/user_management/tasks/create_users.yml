@@ -1,0 +1,30 @@
+---
+- name: "Process user data"
+  ansible.builtin.set_fact:
+    processed_users: "{{ processed_users | default([]) + [user_data] }}"
+  vars:
+    user_data:
+      name: "{{ item.username or ('user_' + ansible_date_time.epoch + '_' + (999999 | random | string)) }}"
+      uid: "{{ item.uid or (1000 if not item.gid else (range(uid_min, uid_max) | random)) }}"
+      group: "{{ item.gid or 'users' }}"
+      password: "{{ item.password or lookup('password', '/dev/null length=' + password_length|string) }}"
+      home: "{{ (item.home_directory or '/home') + '/' + (item.username or ('user_' + ansible_date_time.epoch)) }}"
+      shell: "{{ item.shell | default(os_shell) }}"
+      groups: "{{ ([item.groupname] if item.groupname else []) + (item.additional_groups | default([])) }}"
+      random_password: "{{ not item.password }}"
+      random_uid: "{{ not item.uid }}"
+  loop: "{{ users }}"
+  when: users | length > 0
+
+- name: "Create users"
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    uid: "{{ item.uid }}"
+    group: "{{ item.group }}"
+    groups: "{{ item.groups | join(',') if item.groups else omit }}"
+    password: "{{ item.password | password_hash('sha512') }}"
+    home: "{{ item.home }}"
+    shell: "{{ item.shell }}"
+    create_home: yes
+    state: present
+  loop: "{{ processed_users | default([]) }}"

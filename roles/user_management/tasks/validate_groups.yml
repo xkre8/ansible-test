@@ -1,0 +1,22 @@
+---
+- name: "Get all required groups"
+  ansible.builtin.set_fact:
+    all_required_groups: >-
+      {{ (users | selectattr('gid', 'defined') | selectattr('gid', '!=', '') | map(attribute='gid') | list) +
+         (users | selectattr('groupname', 'defined') | selectattr('groupname', '!=', '') | map(attribute='groupname') | list) +
+         (users | selectattr('additional_groups', 'defined') | map(attribute='additional_groups') | flatten | list) | unique }}
+
+- name: "Check groups exist"
+  ansible.builtin.command: getent group "{{ item }}"
+  register: group_check
+  failed_when: false
+  changed_when: false
+  loop: "{{ all_required_groups }}"
+  when: all_required_groups | length > 0
+
+- name: "Fail if missing groups"
+  ansible.builtin.fail:
+    msg: "Missing groups: {{ group_check.results | selectattr('rc', '!=', 0) | map(attribute='item') | join(', ') }}"
+  when: 
+    - group_check is defined
+    - group_check.results | selectattr('rc', '!=', 0) | list | length > 0

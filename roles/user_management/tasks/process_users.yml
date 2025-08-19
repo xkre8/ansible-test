@@ -1,0 +1,11 @@
+---
+- name: "Convert user_yml to users list"
+  ansible.builtin.set_fact:
+    users: "{{ (user_yml | from_yaml) if user_yml is defined and user_yml | length > 5 else users }}"
+
+- name: "Detect OS shell"
+  ansible.builtin.set_fact:
+    os_shell: >-
+      {{ '/bin/bash' if ansible_os_family in ['RedHat', 'Debian', 'SUSE'] else 
+         '/bin/ash' if ansible_os_family == 'Alpine' else 
+         '/bin/ksh' if ansible_os_family in ['OpenBSD', 'AIX'] else '/bin/sh' }}

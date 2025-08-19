@@ -1,0 +1,9 @@
+---
+- name: "Display user report"
+  ansible.builtin.debug:
+    msg: |
+      Users Created: {{ processed_users | length }}
+      {% for user in processed_users | default([]) %}
+      {{ user.name }}: UID={{ user.uid }}{% if user.random_uid %}(random){% endif %}, Password={{ user.password if user.random_password else 'provided' }}
+      {% endfor %}
+  when: processed_users is defined
