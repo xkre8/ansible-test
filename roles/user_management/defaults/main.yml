@@ -9,32 +9,18 @@ uid_max: 9999
 password_length: 12
 home_base_path: "/home"
 
-# Test configuration
-# users_yaml: |
-#   - username: "john"
-#     uid: 1500
-#     gid: "developers"
+
+
+# user_ymal: |
+#   - username: "alice"
+#     uid: ""
+#     gid: "admins"
 #     password: ""
 #     home_directory: ""
-#     groupname: "docker"
-#     comment: "John Developer"
-#   - username: ""
-#     uid: ""
-#     gid: ""
-#     password: "MySecret123"
-#     home_directory: "/opt/customuser"
-#     shell: "/bin/zsh"
-
-  # - username: "alice"
-  #   uid: ""
-  #   gid: "admins"
-  #   password: ""
-  #   home_directory: ""
-  #   groupname: "wheel"
-
-  # - username: "developer"
-  #   gid: "developers"               
-  #   additional_groups:              
-  #     - "sudo"
-  #     - "docker"
-  #     - "www-data"
+#     groupname: "wheel"
+#   - username: "developer"
+#     gid: "developers"               
+#     additional_groups:              
+#       - "sudo"
+#       - "docker"
+#       - "www-data"

@@ -1,4 +1,12 @@
 ---
+- name: "Debug user_yml variable"
+  ansible.builtin.debug:
+    var: user_yml
+
+- name: "Debug users variable"
+  ansible.builtin.debug:
+    var: users
+    
 - name: "Parse users from YAML if provided"
   ansible.builtin.set_fact:
     users: "{{ (users_yaml | from_yaml) if users_yaml is defined and users_yaml != '' else users }}"
