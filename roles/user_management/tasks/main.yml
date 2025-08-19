@@ -1,40 +1,75 @@
 ---
-- name: "Create groups from gid field"
-  ansible.builtin.group:
-    name: "{{ item }}"
-    state: present
+- name: "Parse users from YAML if provided"
+  ansible.builtin.set_fact:
+    users: "{{ (users_yaml | from_yaml) if users_yaml is defined and users_yaml != '' else users }}"
+
+- name: "Check if specified groups exist"
+  ansible.builtin.command: getent group "{{ item }}"
+  register: group_check
+  failed_when: false
+  changed_when: false
   loop: "{{ users | selectattr('gid', 'defined') | selectattr('gid', '!=', '') | map(attribute='gid') | list | unique }}"
-  when: item != default_group
+  when: users | selectattr('gid', 'defined') | selectattr('gid', '!=', '') | list | length > 0
 
-- name: "Create groups from groupname field"
-  ansible.builtin.group:
-    name: "{{ item }}"
-    state: present
-  loop: "{{ users | selectattr('groupname', 'defined') | selectattr('groupname', '!=', '') | map(attribute='groupname') | list | unique }}"
+- name: "Identify which groups exist"
+  ansible.builtin.set_fact:
+    existing_groups: "{{ group_check.results | selectattr('rc', '==', 0) | map(attribute='item') | list }}"
+    missing_groups: "{{ group_check.results | selectattr('rc', '!=', 0) | map(attribute='item') | list }}"
+  when: group_check is defined
 
-- name: "Generate random values for empty fields"
+- name: "Process users"
   ansible.builtin.set_fact:
     processed_users: "{{ processed_users | default([]) + [processed_user] }}"
   vars:
     random_username: "user_{{ ansible_date_time.epoch }}_{{ 999999 | random }}"
     final_username: "{{ item.username if (item.username is defined and item.username != '') else random_username }}"
+    
+    # Primary group logic with error tracking
+    final_primary_group: >-
+      {%- if item.gid is defined and item.gid != '' -%}
+        {%- if item.gid in existing_groups | default([]) -%}
+          {{ item.gid }}
+        {%- else -%}
+          {{ default_group }}
+        {%- endif -%}
+      {%- else -%}
+        {{ default_group }}
+      {%- endif -%}
+    
+    # Track errors for this user
+    user_errors: >-
+      {%- set errors = [] -%}
+      {%- if item.gid is defined and item.gid != '' and item.gid not in existing_groups | default([]) -%}
+        {%- set _ = errors.append('Group "' + item.gid + '" does not exist, using "' + default_group + '" instead') -%}
+      {%- endif -%}
+      {{ errors }}
+    
     processed_user:
       name: "{{ final_username }}"
-      uid: "{{ item.uid if (item.uid is defined and item.uid != '') else (range(uid_min, uid_max) | random) }}"
-      group: "{{ item.gid if (item.gid is defined and item.gid != '') else default_group }}"
+      uid: "{{ item.uid if (item.uid is defined and item.uid != '') else default_uid }}"
+      group: "{{ final_primary_group }}"
       password: "{{ item.password if (item.password is defined and item.password != '') else lookup('password', '/dev/null length=' + password_length|string + ' chars=ascii_letters,digits') }}"
       home: "{{ item.home_directory if (item.home_directory is defined and item.home_directory != '') else home_base_path + '/' + final_username }}"
       shell: "{{ item.shell | default(default_shell) }}"
-      groups: "{{ item.groupname if (item.groupname is defined and item.groupname != '') else '' }}"
       comment: "{{ item.comment | default('Managed by Ansible') }}"
+      requested_gid: "{{ item.gid | default('') }}"
+      errors: "{{ user_errors }}"
+      has_errors: "{{ user_errors | length > 0 }}"
   loop: "{{ users }}"
+
+- name: "Display group validation errors"
+  ansible.builtin.debug:
+    msg: |
+      ❌ GROUP ERROR for user {{ item.name }}:
+      {{ item.errors | join(', ') }}
+  loop: "{{ processed_users }}"
+  when: item.has_errors
 
 - name: "Create users"
   ansible.builtin.user:
     name: "{{ item.name }}"
     uid: "{{ item.uid }}"
     group: "{{ item.group }}"
-    groups: "{{ item.groups if item.groups != '' else omit }}"
     password: "{{ item.password | password_hash('sha512') }}"
     home: "{{ item.home }}"
     shell: "{{ item.shell }}"
@@ -52,10 +87,24 @@
     state: directory
   loop: "{{ processed_users }}"
   when: create_home | bool
-  
-- name: "Display user creation report"
+
+- name: "Display final results"
   ansible.builtin.debug:
-    msg:
-      - "=== User Creation Report ==="
-      - "Total users created: {{ processed_users | length }}"
-      - "{% for user in processed_users %}User: {{ user.name }} | UID: {{ user.uid }} | Group: {{ user.group }} | PW: {{ user.password }} | Home: {{ user.home }}{% endfor %}"
+    msg: |
+      🎯 USER CREATION REPORT:
+      
+      📊 Total users created: {{ processed_users | length }}
+      ⚠️  Users with errors: {{ processed_users | selectattr('has_errors', '==', true) | list | length }}
+      
+      {% for user in processed_users %}
+      👤 {{ user.name }} | UID: {{ user.uid }} | Group: {{ user.group }}{% if user.requested_gid != '' and user.requested_gid != user.group %} (requested: {{ user.requested_gid }}){% endif %}
+      {% if user.has_errors %}   ❌ {{ user.errors | join(', ') }}{% endif %}
+      {% endfor %}
+      
+      {% if missing_groups | default([]) | length > 0 %}
+      
+      💡 To create missing groups:
+      {% for group in missing_groups %}
+      sudo groupadd {{ group }}
+      {% endfor %}
+      {% endif %}

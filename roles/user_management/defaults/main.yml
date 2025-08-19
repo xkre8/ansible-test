@@ -1,23 +1,15 @@
-# ---
-# username: ""
-# user_group: ""
-# user_password: ""
-# # user_sudo: true
-# user_uid: 1007
-# user_gid: 1007
-# user_home: "/home/{{ username }}"
-
 ---
 users: []
 default_shell: "/bin/bash"
 default_group: "users"
+default_uid: 1000
 create_home: true
 uid_min: 1000
 uid_max: 9999
 password_length: 12
 home_base_path: "/home"
 
-
+# Test configuration
 # users_yaml: |
 #   - username: "john"
 #     uid: 1500
@@ -32,11 +24,17 @@ home_base_path: "/home"
 #     password: "MySecret123"
 #     home_directory: "/opt/customuser"
 #     shell: "/bin/zsh"
-#   - username: "alice"
-#     uid: ""
-#     gid: "admins"
-#     password: ""
-#     home_directory: ""
-#     groupname: "wheel"
 
+  # - username: "alice"
+  #   uid: ""
+  #   gid: "admins"
+  #   password: ""
+  #   home_directory: ""
+  #   groupname: "wheel"
 
+  # - username: "developer"
+  #   gid: "developers"               
+  #   additional_groups:              
+  #     - "sudo"
+  #     - "docker"
+  #     - "www-data"

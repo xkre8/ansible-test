@@ -1,5 +1,48 @@
+# ---
+# # Basic validation only
+# - name: Check required variables
+#   ansible.builtin.fail:
+#     msg: "Missing required variable: {{ item }}"
+#   when: vars[item] is not defined or vars[item] == ""
+#   loop:
+#     - volume_group_name
+
+# - name: Check device is specified when needed
+#   ansible.builtin.fail:
+#     msg: |
+#       Device required for {{ vg_strategy }} strategy!
+#       Specify: selected_disk_name, manual_lvm_device, or existing_pv_device
+#   when:
+#     - vg_strategy in ['create_new', 'extend_existing']
+#     - selected_disk_name == ""
+#     - manual_lvm_device == ""
+#     - existing_pv_device == "" or pv_strategy != 'use_existing_pv'
+
+# - name: Validate device exists
+#   ansible.builtin.stat:
+#     path: "{{ target_device }}"
+#   register: device_check
+#   failed_when: not device_check.stat.exists
+#   when: 
+#     - target_device is defined
+#     - target_device != ""
+#     - vg_strategy in ['create_new', 'extend_existing']
+
+# - name: Check VG exists for use_existing strategy
+#   ansible.builtin.command: vgs --noheadings "{{ volume_group_name }}"
+#   register: vg_check
+#   failed_when: vg_check.rc != 0
+#   changed_when: false
+#   when: vg_strategy == 'use_existing'
+
+# - name: Check VG doesn't exist for create_new strategy
+#   ansible.builtin.command: vgs --noheadings "{{ volume_group_name }}"
+#   register: vg_exists
+#   failed_when: vg_exists.rc == 0
+#   changed_when: false
+#   when: vg_strategy == 'create_new'
+
 ---
-# Basic validation only
 - name: Check required variables
   ansible.builtin.fail:
     msg: "Missing required variable: {{ item }}"
@@ -9,14 +52,12 @@
 
 - name: Check device is specified when needed
   ansible.builtin.fail:
-    msg: |
-      Device required for {{ vg_strategy }} strategy!
-      Specify: selected_disk_name, manual_lvm_device, or existing_pv_device
+    msg: "Device required! Specify: selected_disk_name, manual_lvm_device, or existing_pv_device"
   when:
     - vg_strategy in ['create_new', 'extend_existing']
     - selected_disk_name == ""
     - manual_lvm_device == ""
-    - existing_pv_device == "" or pv_strategy != 'use_existing_pv'
+    - (existing_pv_device == "" or pv_strategy != 'use_existing_pv')
 
 - name: Validate device exists
   ansible.builtin.stat:
@@ -24,8 +65,7 @@
   register: device_check
   failed_when: not device_check.stat.exists
   when: 
-    - target_device is defined
-    - target_device != ""
+    - target_device is defined and target_device != ""
     - vg_strategy in ['create_new', 'extend_existing']
 
 - name: Check VG exists for use_existing strategy
@@ -35,9 +75,16 @@
   changed_when: false
   when: vg_strategy == 'use_existing'
 
-- name: Check VG doesn't exist for create_new strategy
-  ansible.builtin.command: vgs --noheadings "{{ volume_group_name }}"
-  register: vg_exists
-  failed_when: vg_exists.rc == 0
-  changed_when: false
-  when: vg_strategy == 'create_new'
+- name: Validate filesystem configuration
+  ansible.builtin.fail:
+    msg: |
+      Invalid filesystem config! Check:
+      - path, lv_name, size_mb are required
+      - size_mb must be positive number
+      - fstype must be: xfs, ext4, ext3, ext2
+  when: 
+    - filesystem_dirs | length > 0
+    - item.path is not defined or item.lv_name is not defined or 
+      item.size_mb is not defined or (item.size_mb | int) <= 0 or
+      (item.fstype is defined and item.fstype not in ['xfs', 'ext4', 'ext3', 'ext2'])
+  loop: "{{ filesystem_dirs }}"

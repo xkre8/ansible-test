@@ -78,63 +78,23 @@
 # - name: Display summary
 #   ansible.builtin.include_tasks: summary.yml
 
-
 ---
-- name: Install LVM packages
+- name: Install LVM and filesystem packages
   ansible.builtin.package:
-    name: lvm2
+    name:
+      - lvm2           # for LVM management
+      - xfsprogs       # for XFS filesystem
+      - e2fsprogs      # for ext2/ext3/ext4 filesystem
     state: present
 
 - name: Parse filesystem configuration
   ansible.builtin.set_fact:
     filesystem_dirs: "{{ (filesystem_config | from_yaml) if filesystem_config is defined else [] }}"
 
-- name: Debug filesystem configuration
-  ansible.builtin.debug:
-    msg: |
-      🔍 Filesystem Configuration Debug:
-      {% for fs in filesystem_dirs %}
-      {{ loop.index }}. Path: {{ fs.path }}
-         LV: {{ fs.lv_name }}
-         Size: {{ fs.size_mb }}MB
-         FS: {{ fs.fstype | default('xfs') }}
-      {% endfor %}
-
-- name: Check for duplicate paths
-  ansible.builtin.fail:
-    msg: |
-      ❌ Duplicate mount paths detected!
-      
-      Duplicates found: {{ filesystem_dirs | map(attribute='path') | list | select('equalto', item) | list | length }}x {{ item }}
-      
-      Each mount path must be unique!
-  when: (filesystem_dirs | map(attribute='path') | list).count(item) > 1
-  loop: "{{ filesystem_dirs | map(attribute='path') | unique | list }}"
-
-- name: Check for duplicate LV names
-  ansible.builtin.fail:
-    msg: |
-      ❌ Duplicate Logical Volume names detected!
-      
-      Duplicates found: {{ filesystem_dirs | map(attribute='lv_name') | list | select('equalto', item) | list | length }}x {{ item }}
-      
-      Each LV name must be unique!
-  when: (filesystem_dirs | map(attribute='lv_name') | list).count(item) > 1
-  loop: "{{ filesystem_dirs | map(attribute='lv_name') | unique | list }}"
-
 - name: Calculate total requested LV size
   ansible.builtin.set_fact:
     total_requested_mb: "{{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum }}"
-
-- name: Display size calculation
-  ansible.builtin.debug:
-    msg: |
-      📊 LV Size Calculation:
-      {% for fs in filesystem_dirs %}
-      - {{ fs.lv_name }}: {{ fs.size_mb }}MB
-      {% endfor %}
-      
-      📈 Total Requested: {{ total_requested_mb }}MB ({{ (total_requested_mb | int / 1024) | round(2) }}GB)
+  when: filesystem_dirs | length > 0
 
 - name: Validate configuration
   ansible.builtin.include_tasks: validate.yml
@@ -159,6 +119,7 @@
   when: 
     - pv_strategy == 'create_new_pv'
     - vg_strategy in ['create_new', 'extend_existing']
+    - target_device is defined and target_device != ""
 
 # === VOLUME GROUP ===
 - name: Create/Extend Volume Group
@@ -166,70 +127,35 @@
     vg: "{{ volume_group_name }}"
     pvs: "{{ target_device }}"
     state: present
-  when: vg_strategy in ['create_new', 'extend_existing']
+  when: 
+    - vg_strategy in ['create_new', 'extend_existing']
+    - target_device is defined and target_device != ""
 
-# === SIZE VALIDATION ===
-- name: Get Volume Group size information
-  ansible.builtin.command: vgs --noheadings --units m "{{ volume_group_name }}" -o vg_size,vg_free
-  register: vg_size_info
+# === CRITICAL: VG SIZE CHECK AND FAIL IF INSUFFICIENT ===
+- name: Get Volume Group size and validate
+  ansible.builtin.shell: |
+    vg_info=$(vgs --noheadings --units m "{{ volume_group_name }}" -o vg_free 2>/dev/null || echo "0")
+    vg_free_mb=$(echo "$vg_info" | sed 's/[^0-9.]//g' | cut -d. -f1)
+    total_requested={{ total_requested_mb | default(0) }}
+    
+    if [ "$total_requested" -gt "$vg_free_mb" ]; then
+      echo "FAIL: Requested ${total_requested}MB exceeds available ${vg_free_mb}MB"
+      exit 1
+    else
+      echo "PASS: ${vg_free_mb}MB available, ${total_requested}MB requested"
+      exit 0
+    fi
+  register: size_check
+  failed_when: size_check.rc != 0
   changed_when: false
   when: filesystem_dirs | length > 0
 
-- name: Parse VG size information
-  ansible.builtin.set_fact:
-    vg_total_mb: "{{ vg_size_info.stdout.split()[0] | regex_replace('[^0-9]', '') | int }}"
-    vg_free_mb: "{{ vg_size_info.stdout.split()[1] | regex_replace('[^0-9]', '') | int }}"
-  when: vg_size_info is defined
-
-- name: Display Volume Group information
+- name: Display size validation result
   ansible.builtin.debug:
-    msg: |
-      📦 Volume Group: {{ volume_group_name }}
-      💾 Total Size: {{ vg_total_mb }}MB ({{ (vg_total_mb | int / 1024) | round(2) }}GB)
-      🆓 Free Space: {{ vg_free_mb }}MB ({{ (vg_free_mb | int / 1024) | round(2) }}GB)
-      📊 Requested: {{ total_requested_mb }}MB ({{ (total_requested_mb | int / 1024) | round(2) }}GB)
-      
-      {% if (total_requested_mb | int) > (vg_free_mb | int) %}
-      ❌ INSUFFICIENT SPACE!
-      📉 Short by: {{ (total_requested_mb | int) - (vg_free_mb | int) }}MB
-      {% else %}
-      ✅ Sufficient space available
-      📊 Remaining: {{ (vg_free_mb | int) - (total_requested_mb | int) }}MB
-      {% endif %}
-  when: vg_size_info is defined
+    msg: "{{ size_check.stdout }}"
+  when: size_check is defined
 
-- name: Validate sufficient space in Volume Group
-  ansible.builtin.fail:
-    msg: |
-      ❌ INSUFFICIENT SPACE IN VOLUME GROUP!
-      
-      📦 Volume Group: {{ volume_group_name }}
-      💾 Total VG Size: {{ vg_total_mb }}MB ({{ (vg_total_mb | int / 1024) | round(2) }}GB)
-      🆓 Available Space: {{ vg_free_mb }}MB ({{ (vg_free_mb | int / 1024) | round(2) }}GB)
-      
-      📊 Requested LVs:
-      {% for fs in filesystem_dirs %}
-      - {{ fs.lv_name }}: {{ fs.size_mb }}MB
-      {% endfor %}
-      
-      📈 Total Requested: {{ total_requested_mb }}MB ({{ (total_requested_mb | int / 1024) | round(2) }}GB)
-      📉 Space Shortage: {{ (total_requested_mb | int) - (vg_free_mb | int) }}MB
-      
-      💡 Solutions:
-      {% if vg_strategy == 'use_existing' %}
-      - Reduce LV sizes in filesystem_config
-      - Change strategy to 'extend_existing' and add more disks
-      - Free up space in existing VG
-      {% elif vg_strategy in ['create_new', 'extend_existing'] %}
-      - Use larger disk(s)
-      - Reduce LV sizes in filesystem_config
-      - Add multiple disks
-      {% endif %}
-  when:
-    - vg_size_info is defined
-    - (total_requested_mb | int) > (vg_free_mb | int)
-
-# === LOGICAL VOLUMES ===
+# === LOGICAL VOLUMES (Only if validation passed) ===
 - name: Create Logical Volumes
   community.general.lvol:
     vg: "{{ volume_group_name }}"
@@ -237,6 +163,7 @@
     size: "{{ item.size_mb }}m"
     state: present
   loop: "{{ filesystem_dirs }}"
+  when: filesystem_dirs | length > 0
 
 # === FILESYSTEMS ===
 - name: Create filesystems
@@ -245,6 +172,7 @@
     dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
     force: no
   loop: "{{ filesystem_dirs }}"
+  when: filesystem_dirs | length > 0
 
 - name: Create mount directories
   ansible.builtin.file:
@@ -254,15 +182,35 @@
     group: "{{ item.group | default('root') }}"
     mode: "{{ item.mode | default('0755') }}"
   loop: "{{ filesystem_dirs }}"
+  when: filesystem_dirs | length > 0
 
-- name: Mount filesystems
+# === MOUNT WITH PROPER DUMP/PASS VALUES ===
+- name: Mount filesystems with correct dump/pass values
   ansible.posix.mount:
     path: "{{ item.path }}"
     src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
     fstype: "{{ item.fstype | default('xfs') }}"
     opts: "{{ item.mount_opts | default('defaults') }}"
+    dump: >-
+      {%- if (item.fstype | default('xfs')) == 'xfs' -%}
+      0
+      {%- elif (item.fstype | default('xfs')) in ['ext4', 'ext3', 'ext2'] -%}
+      1
+      {%- else -%}
+      0
+      {%- endif -%}
+    passno: >-
+      {%- if (item.fstype | default('xfs')) == 'xfs' -%}
+      0
+      {%- elif (item.fstype | default('xfs')) in ['ext4', 'ext3', 'ext2'] -%}
+      2
+      {%- else -%}
+      0
+      {%- endif -%}
     state: mounted
   loop: "{{ filesystem_dirs }}"
+  when: filesystem_dirs | length > 0
 
 - name: Display summary
   ansible.builtin.include_tasks: summary.yml
+
