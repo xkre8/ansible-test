@@ -2,8 +2,21 @@
 - name: "Display user report"
   ansible.builtin.debug:
     msg: |
-      Users Created: {{ processed_users | length }}
+      
+      🎯 === USER CREATION REPORT === 🎯
+      
+      Total users created: {{ processed_users | default([]) | length }}
+      
+      User Details:
       {% for user in processed_users | default([]) %}
-      {{ user.name }}: UID={{ user.uid }}{% if user.random_uid %}(random){% endif %}, Password={{ user.password if user.random_password else 'provided' }}
+      ─────────────────────────────────────────
+      👤 {{ user.name }}{% if user.random_username %} (🎲 Generated){% endif %}
+        ├── UID: {{ user.uid }}{% if user.random_uid %} (🎲 Random){% endif %}
+        ├── Group: {{ user.group }}
+        ├── Additional Groups: {{ user.groups | join(', ') if user.groups | length > 0 else 'None' }}
+        ├── Home: {{ user.home }}
+        ├── Shell: {{ user.shell }}
+        └── Password: {% if user.random_password %}🎲 {{ user.password }} (SAVE THIS!){% else %}✅ User Provided{% endif %}
+      
       {% endfor %}
-  when: processed_users is defined
+  when: processed_users is defined and processed_users | length > 0
