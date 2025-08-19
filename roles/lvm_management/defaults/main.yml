@@ -10,10 +10,6 @@ manual_lvm_device: ""
 existing_pv_device: ""
 
 # Filesystem configuration (YAML string from survey)
-filesystem_config: |
-  - path: /data
-    lv_name: lv_data
-    size_mb: 5000
-    fstype: xfs
+filesystem_config: []
 
 auto_generate_lv_names: true

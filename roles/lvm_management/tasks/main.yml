@@ -91,23 +91,6 @@
   ansible.builtin.set_fact:
     filesystem_dirs: "{{ (filesystem_config | from_yaml) if filesystem_config is defined else [] }}"
 
-- name: Generate LV names automatically
-  ansible.builtin.set_fact:
-    filesystem_dirs: "{{ processed_filesystems }}"
-  vars:
-    processed_filesystems: >-
-      {%- set result = [] -%}
-      {%- for item in filesystem_dirs -%}
-        {%- set auto_lv_name = volume_group_name + '_' + (item.path | regex_replace('^/', '') | regex_replace('/', '_') | regex_replace('-', '_')) -%}
-        {%- set final_lv_name = item.lv_name if (item.lv_name is defined and item.lv_name != '') else auto_lv_name -%}
-        {%- set processed_item = item | combine({'lv_name': final_lv_name}) -%}
-        {%- set _ = result.append(processed_item) -%}
-      {%- endfor -%}
-      {{ result }}
-  when: 
-    - auto_generate_lv_names | default(true)
-    - filesystem_dirs | length > 0
-    
 - name: Calculate total requested LV size
   ansible.builtin.set_fact:
     total_requested_mb: "{{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum }}"
