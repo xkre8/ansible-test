@@ -2,7 +2,7 @@
 users: []
 default_shell: "/bin/bash"
 default_group: "users"
-default_uid: 1000
+default_uid: 1005
 create_home: true
 uid_min: 1000
 uid_max: 9999

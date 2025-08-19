@@ -1,12 +1,22 @@
 ---
-- name: "Debug user_yml variable"
+- name: "Debug all variables received"
   ansible.builtin.debug:
-    var: user_yml
+    msg:
+      - "user_yml defined: {{ user_yml is defined }}"
+      - "user_yml value: {{ user_yml | default('NOT_DEFINED') }}"
+      - "users length: {{ users | length }}"
+      - "Extra vars received: {{ ansible_play_vars | default('None') }}"
 
 - name: "Convert user_yml to users list if provided"
   ansible.builtin.set_fact:
     users: "{{ (user_yml | from_yaml) if user_yml is defined and user_yml | length > 5 else users }}"
-  when: user_yml is defined
+  # ลบ when condition ออกชั่วคราวเพื่อดู
+
+- name: "Debug processed users"
+  ansible.builtin.debug:
+    var: users
+
+# ...existing tasks...
 
 - name: "Detect OS and set default shell"
   ansible.builtin.set_fact:
