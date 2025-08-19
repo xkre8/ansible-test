@@ -15,3 +15,5 @@ filesystem_config: |
     lv_name: lv_data
     size_mb: 5000
     fstype: xfs
+
+auto_generate_lv_names: true
