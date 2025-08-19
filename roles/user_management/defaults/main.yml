@@ -9,9 +9,8 @@ uid_max: 9999
 password_length: 12
 home_base_path: "/home"
 
-
-
-# user_ymal: |
+# แก้ไขการสะกด user_ymal เป็น user_yml
+# user_yml: |
 #   - username: "alice"
 #     uid: ""
 #     gid: "admins"
