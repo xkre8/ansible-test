@@ -12,7 +12,7 @@ home_base_path: "/home"
 # แก้ไข user_yml ให้เป็น default ว่าง
 user_yml: ""
 
-
+create_missing_groups: false
 
 # user_yml: |
 #   - username: "bob-v0-1"

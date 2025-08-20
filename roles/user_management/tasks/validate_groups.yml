@@ -13,12 +13,6 @@
   ansible.builtin.set_fact:
     all_required_groups: "{{ (gid_groups + groupname_groups + additional_groups_flat) | unique }}"
 
-- name: "Debug required groups"
-  ansible.builtin.debug:
-    msg: 
-      - "All required groups: {{ all_required_groups }}"
-      - "Groups count: {{ all_required_groups | length }}"
-
 - name: "Check groups exist"
   ansible.builtin.command: getent group "{{ item }}"
   register: group_check
@@ -37,22 +31,35 @@
   when: 
     - group_check is defined
     - group_check.results is defined
-    - group_check.results | length > 0
 
-- name: "Debug final missing groups"
-  ansible.builtin.debug:
-    msg:
-      - "Missing groups: {{ missing_groups }}"
-      - "Missing groups type: {{ missing_groups | type_debug }}"
-      - "Missing count: {{ missing_groups | length }}"
+# *** เงื่อนไขใหม่ ***
+- name: "Create missing groups if enabled"
+  ansible.builtin.group:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ missing_groups }}"
+  when: 
+    - create_missing_groups | bool
+    - missing_groups | length > 0
 
-- name: "Fail if missing groups found"
+- name: "Update missing groups list after creation"
+  ansible.builtin.set_fact:
+    missing_groups: []
+  when: 
+    - create_missing_groups | bool
+    - missing_groups | length > 0
+
+- name: "Fail if missing groups found and auto-creation disabled"
   ansible.builtin.fail:
     msg: |
       ❌ MISSING GROUPS DETECTED ❌
       Required: {{ all_required_groups | join(', ') }}
       Missing: {{ missing_groups | join(', ') }}
+      
+      Options:
+      1. Create groups manually: sudo groupadd {{ missing_groups | join(' ') }}
+      2. Enable auto-creation: create_missing_groups=true
   when: 
+    - not (create_missing_groups | bool)
     - missing_groups is defined
-    - missing_groups is not none
     - missing_groups | length > 0
