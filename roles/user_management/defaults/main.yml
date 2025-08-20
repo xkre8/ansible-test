@@ -11,3 +11,23 @@ home_base_path: "/home"
 
 # แก้ไข user_yml ให้เป็น default ว่าง
 user_yml: ""
+
+
+
+# user_yml: |
+#   - username: "bob-v0-1"
+#     uid: "1001"
+#     gid: "users"
+#     password: "mypassword123"
+#     home_directory: "/home/alice"
+#     groupname: "azureuser"
+
+#   - username: "bob-v1"
+#     gid:
+#     additional_groups:
+#       - "azureuser" 
+
+#   - username: "bob-v2"
+#     gid: wheel
+#     additional_groups:
+#       - "azureuser"
