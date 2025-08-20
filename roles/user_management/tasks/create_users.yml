@@ -49,10 +49,12 @@
     
     user_data:
       name: "{{ final_username if final_username != '' else random_username }}"
-      uid: "{{ final_uid if final_uid != '' else (1000 if final_gid == '' else random_uid) }}"
+      # *** LOGIC ใหม่ ***
+      uid: "{{ final_uid if final_uid != '' else random_uid }}"
       group: "{{ final_gid if final_gid != '' else 'users' }}"
+      # *** จบ LOGIC ใหม่ ***
       password: "{{ final_password if final_password != '' else random_password }}"
-      home: "{{ (final_home_dir if final_home_dir != '' else '/home') + '/' + (final_username if final_username != '' else random_username) }}"
+      home: "{{ (final_home_dir if final_home_dir != '' else home_base_path) + '/' + (final_username if final_username != '' else random_username) }}"
       shell: "{{ item.shell | default(os_shell) }}"
       groups: "{{ ([final_groupname] if final_groupname != '' else []) + (item.additional_groups | default([])) }}"
       # Track what was generated
