@@ -313,9 +313,3 @@ filesystem_config: |
 ---
 
 ## 🎯 Best Practices
-
-1. **Always test with dry-run** ก่อนรันจริง
-2. **Backup existing data** ก่อนใช้ LVM role
-3. **ตรวจสอบ groups** ที่มีในระบบก่อนสร้าง users
-4. **ใช้ Extra Variables** ใน AAP แทน hardcode ใน playbook
-5. **Monitor generated passwords** และบันทึกอย่างปลอดภัย
