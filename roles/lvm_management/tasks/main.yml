@@ -115,7 +115,7 @@
   ansible.builtin.debug:
     msg: "Processed filesystems: {{ filesystem_dirs }}"
   when: filesystem_dirs | length > 0
-  
+
 - name: Calculate total requested LV size
   ansible.builtin.set_fact:
     total_requested_mb: "{{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum }}"
@@ -210,10 +210,10 @@
   when: filesystem_dirs | length > 0
 
 # === MOUNT WITH PROPER DUMP/PASS VALUES ===
-- name: Mount filesystems with correct dump/pass values
+- name: Mount filesystems with mapper format
   ansible.posix.mount:
     path: "{{ item.path }}"
-    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    src: "/dev/mapper/{{ volume_group_name | regex_replace('-', '--') }}-{{ item.lv_name }}"
     fstype: "{{ item.fstype | default('xfs') }}"
     opts: "{{ item.mount_opts | default('defaults') }}"
     dump: >-
