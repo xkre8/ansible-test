@@ -13,3 +13,25 @@ existing_pv_device: ""
 filesystem_config: []
 
 auto_generate_lv_names: true
+
+
+
+  # - path: /opt/app
+  #   lv_name: ""
+  #   size_mb: 2048
+  #   fstype: xfs
+
+  # - path: /data
+  #   lv_name: "custom_data"
+  #   size_mb: 2048
+  #   fstype: xfs
+
+  # - path: /app
+  #   lv_name: "custom_app"
+  #   size_mb: 2048
+  #   fstype: ext4
+
+  # - path: /bin/logs
+  #   lv_name: "bin/logs"
+  #   size_mb: 2048
+  #   fstype: ext4
