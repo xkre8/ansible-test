@@ -1,10 +1,23 @@
 ---
-- name: "Get all required groups"
+- name: "Debug parsed users"
+  ansible.builtin.debug:
+    var: users
+
+- name: "Extract required groups safely"
   ansible.builtin.set_fact:
-    all_required_groups: >-
-      {{ (users | selectattr('gid', 'defined') | selectattr('gid', '!=', '') | map(attribute='gid') | list) +
-         (users | selectattr('groupname', 'defined') | selectattr('groupname', '!=', '') | map(attribute='groupname') | list) +
-         (users | selectattr('additional_groups', 'defined') | map(attribute='additional_groups') | flatten | list) | unique }}
+    gid_groups: "{{ users | selectattr('gid', 'defined') | selectattr('gid') | map(attribute='gid') | select('string') | select() | list }}"
+    groupname_groups: "{{ users | selectattr('groupname', 'defined') | selectattr('groupname') | map(attribute='groupname') | select('string') | select() | list }}"
+    additional_groups_flat: "{{ users | selectattr('additional_groups', 'defined') | map(attribute='additional_groups') | flatten | select('string') | list }}"
+
+- name: "Combine all required groups"
+  ansible.builtin.set_fact:
+    all_required_groups: "{{ (gid_groups + groupname_groups + additional_groups_flat) | unique }}"
+
+- name: "Debug required groups"
+  ansible.builtin.debug:
+    msg: 
+      - "All required groups: {{ all_required_groups }}"
+      - "Groups count: {{ all_required_groups | length }}"
 
 - name: "Check groups exist"
   ansible.builtin.command: getent group "{{ item }}"
@@ -14,9 +27,32 @@
   loop: "{{ all_required_groups }}"
   when: all_required_groups | length > 0
 
-- name: "Fail if missing groups"
-  ansible.builtin.fail:
-    msg: "Missing groups: {{ group_check.results | selectattr('rc', '!=', 0) | map(attribute='item') | join(', ') }}"
+- name: "Set missing_groups to empty list by default"
+  ansible.builtin.set_fact:
+    missing_groups: []
+
+- name: "Identify missing groups"
+  ansible.builtin.set_fact:
+    missing_groups: "{{ group_check.results | selectattr('rc', '!=', 0) | map(attribute='item') | list }}"
   when: 
     - group_check is defined
-    - group_check.results | selectattr('rc', '!=', 0) | list | length > 0
+    - group_check.results is defined
+    - group_check.results | length > 0
+
+- name: "Debug final missing groups"
+  ansible.builtin.debug:
+    msg:
+      - "Missing groups: {{ missing_groups }}"
+      - "Missing groups type: {{ missing_groups | type_debug }}"
+      - "Missing count: {{ missing_groups | length }}"
+
+- name: "Fail if missing groups found"
+  ansible.builtin.fail:
+    msg: |
+      ❌ MISSING GROUPS DETECTED ❌
+      Required: {{ all_required_groups | join(', ') }}
+      Missing: {{ missing_groups | join(', ') }}
+  when: 
+    - missing_groups is defined
+    - missing_groups is not none
+    - missing_groups | length > 0
