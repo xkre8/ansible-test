@@ -20,9 +20,19 @@
       {{ result }}
   when: service_requests_yml is defined and service_requests_yml | length > 5
 
+# ← เพิ่ม task นี้
+- name: "Detect OS shell"
+  ansible.builtin.set_fact:
+    os_shell: >-
+      {{ '/bin/bash' if ansible_os_family in ['RedHat', 'Debian', 'SUSE'] else 
+         '/bin/ash' if ansible_os_family == 'Alpine' else 
+         '/bin/ksh' if ansible_os_family in ['OpenBSD', 'AIX'] else '/bin/sh' }}
+
 - name: "Debug processed users"
   ansible.builtin.debug:
     msg:
+      - "OS Family: {{ ansible_os_family }}"
+      - "Default shell: {{ os_shell }}"
       - "service_requests_yml length: {{ service_requests_yml | length if service_requests_yml is defined else 'undefined' }}"
       - "user_yml length: {{ user_yml | length if user_yml is defined else 'undefined' }}"
       - "Total users: {{ users | length }}"
