@@ -3,12 +3,12 @@
   ansible.builtin.set_fact:
     processed_users: "{{ processed_users | default([]) + [user_data] }}"
   vars:
-    # ใช้ default() แทน or เพื่อความปลอดภัย
+    # ใช้ default() แทน or 
     random_username: "user_{{ ansible_date_time.epoch }}_{{ 999999 | random }}"
     random_uid: "{{ range(uid_min, uid_max) | random }}"
     random_password: "{{ lookup('password', '/dev/null length=' + password_length|string + ' chars=ascii_letters,digits,!@#$%^&*') }}"
 
-    # ตรวจสอบและกำหนดค่าอย่างปลอดภัย
+    #
     final_username: "{{ item.username | default('') }}"
     final_uid: "{{ item.uid | default('') }}"
     final_gid: "{{ item.gid | default('') }}"
