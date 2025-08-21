@@ -1,11 +1,29 @@
 ---
-- name: "Convert user_yml to users list"
+- name: "Convert user_yml to users list (legacy format)"
   ansible.builtin.set_fact:
     users: "{{ (user_yml | from_yaml) if user_yml is defined and user_yml | length > 5 else users }}"
 
-- name: "Detect OS shell"
+- name: "Convert service_requests_yml to users list (new format)"
   ansible.builtin.set_fact:
-    os_shell: >-
-      {{ '/bin/bash' if ansible_os_family in ['RedHat', 'Debian', 'SUSE'] else 
-         '/bin/ash' if ansible_os_family == 'Alpine' else 
-         '/bin/ksh' if ansible_os_family in ['OpenBSD', 'AIX'] else '/bin/sh' }}
+    users: "{{ flattened_users }}"
+  vars:
+    service_requests: "{{ (service_requests_yml | from_yaml) if service_requests_yml is defined and service_requests_yml | length > 5 else [] }}"
+    flattened_users: >-
+      {%- set result = [] -%}
+      {%- for sr in service_requests -%}
+        {%- for user in sr.users | default([]) -%}
+          {%- set auto_description = sr.sr_number + ' ' + sr.owner_name + ' ' + sr.tel -%}
+          {%- set enhanced_user = user | combine({'auto_description': auto_description, 'sr_info': sr}) -%}
+          {%- set _ = result.append(enhanced_user) -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ result }}
+  when: service_requests_yml is defined and service_requests_yml | length > 5
+
+- name: "Debug processed users"
+  ansible.builtin.debug:
+    msg:
+      - "service_requests_yml length: {{ service_requests_yml | length if service_requests_yml is defined else 'undefined' }}"
+      - "user_yml length: {{ user_yml | length if user_yml is defined else 'undefined' }}"
+      - "Total users: {{ users | length }}"
+      - "Users: {{ users | map(attribute='username') | list if users | length > 0 else 'None' }}"
