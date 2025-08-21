@@ -9,28 +9,52 @@ uid_max: 9999
 password_length: 12
 home_base_path: "/home"
 
-# แก้ไข user_yml ให้เป็น default ว่าง
+# แก้ไข user_yml ให้เป็น default ว่าง (เก่า)
 user_yml: ""
 
-create_missing_groups: false
+# เพิ่ม service_requests_yml (ใหม่)
+service_requests_yml: ""
 
+create_missing_groups: false
 # true สร้าง
 # false ไม่สร้าง
 
-# user_yml: |
-#   - username: "bob-v0-1"
-#     uid: "1001"
-#     gid: "users"
-#     password: "mypassword123"
-#     home_directory: "/home/alice"
-#     groupname: "azureuser"
+# service_requests_yml: |
+#   - sr_number: "SR001"
+#     owner_name: "John Doe"
+#     tel: "02-123-4567"
+#     users:
+#       - username: "alice"
+#         uid: "1001"
+#         gid: "users"
+#         purpose: "Backend Development"
+#         password: "mypassword123"
+#         home_directory: "/home/alice"
+#         groupname: "developers"
+#         additional_groups:                    
+#           - "docker"
+#           - "sudo"
+#           - "npm"
+      
+#       - username: "bob"
+#         uid: ""
+#         gid: ""
+#         purpose: "Database Administration"
+#         password: ""
+#         groupname: "developers"
+#         additional_groups:
+#           - "mysql"
+#           - "postgresql"
 
-#   - username: "bob-v1"
-#     gid:
-#     additional_groups:
-#       - "azureuser" 
-
-#   - username: "bob-v2"
-#     gid: wheel
-#     additional_groups:
-#       - "azureuser"
+#   - sr_number: "SR002"
+#     owner_name: "Jane Smith"
+#     tel: "02-987-6543"
+#     users:
+#       - username: "charlie"
+#         gid: "wheel"
+#         purpose: "System Administration"
+#         groupname: "admins"
+#         additional_groups:
+#           - "sudo"
+#           - "systemd-journal"
+#           - "audit"

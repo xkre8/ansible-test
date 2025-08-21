@@ -1,5 +1,5 @@
 ---
-- name: "Display user report"
+- name: "Display user report grouped by SR"
   ansible.builtin.debug:
     msg: |
       
@@ -7,16 +7,24 @@
       
       Total users created: {{ processed_users | default([]) | length }}
       
-      User Details:
-      {% for user in processed_users | default([]) %}
-      ─────────────────────────────────────────
+      📋 Service Requests Summary:
+      {% for sr_num in processed_users | map(attribute='sr_number') | unique %}
+      {% if sr_num != '' %}
+      ═══════════════════════════════════════════════════════════════
+      📞 {{ sr_num }} - {{ (processed_users | selectattr('sr_number', '==', sr_num) | first).owner_name }} ({{ (processed_users | selectattr('sr_number', '==', sr_num) | first).tel }})
+      ═══════════════════════════════════════════════════════════════
+      {% for user in processed_users | selectattr('sr_number', '==', sr_num) %}
       👤 {{ user.name }}{% if user.random_username %} (🎲 Generated){% endif %}
         ├── UID: {{ user.uid }}{% if user.random_uid %} (🎲 Random){% endif %}
+        ├── Purpose: {{ user.purpose if user.purpose != '' else 'Not specified' }}   # ← เพิ่มบรรทัดนี้
         ├── Group: {{ user.group }}
         ├── Additional Groups: {{ user.groups | join(', ') if user.groups | length > 0 else 'None' }}
         ├── Home: {{ user.home }}
         ├── Shell: {{ user.shell }}
+        ├── Description: {{ user.comment }}
         └── Password: {% if user.random_password %}🎲 {{ user.password }} (SAVE THIS!){% else %}✅ User Provided{% endif %}
       
+      {% endfor %}
+      {% endif %}
       {% endfor %}
   when: processed_users is defined and processed_users | length > 0
