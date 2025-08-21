@@ -14,6 +14,9 @@ user_yml: ""
 
 create_missing_groups: false
 
+# true สร้าง
+# false ไม่สร้าง
+
 # user_yml: |
 #   - username: "bob-v0-1"
 #     uid: "1001"
