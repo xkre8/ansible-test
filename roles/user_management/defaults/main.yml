@@ -15,7 +15,7 @@ user_yml: ""
 # เพิ่ม service_requests_yml (ใหม่)
 service_requests_yml: ""
 
-create_missing_groups: false
+create_missing_groups: true
 # true สร้าง
 # false ไม่สร้าง
 
