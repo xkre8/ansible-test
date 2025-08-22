@@ -20,7 +20,7 @@
       {{ result }}
   when: service_requests_yml is defined and service_requests_yml | length > 5
 
-# ← เพิ่ม task นี้
+
 - name: "Detect OS shell"
   ansible.builtin.set_fact:
     os_shell: >-
