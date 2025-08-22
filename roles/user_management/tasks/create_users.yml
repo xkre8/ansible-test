@@ -3,12 +3,12 @@
   ansible.builtin.set_fact:
     processed_users: "{{ processed_users | default([]) + [user_data] }}"
   vars:
-    # ใช้ default() แทน or 
+    # ใช้ default() แทน or เพื่อความปลอดภัย
     random_username: "user_{{ ansible_date_time.epoch }}_{{ 999999 | random }}"
     random_uid: "{{ range(uid_min, uid_max) | random }}"
-    random_password: "{{ lookup('password', '/dev/null length=' + password_length|string + ' chars=ascii_letters,digits,!@#$%^&*') }}"
+    random_password: "{{ lookup('password', '/dev/null length=' + password_length|string + ' chars=ascii_letters,digits') }}"  # ลบ special chars
 
-    #
+    # ตรวจสอบและกำหนดค่าอย่างปลอดภัย
     final_username: "{{ item.username | default('') }}"
     final_uid: "{{ item.uid | default('') }}"
     final_gid: "{{ item.gid | default('') }}"
@@ -16,27 +16,31 @@
     final_home_dir: "{{ item.home_directory | default('') }}"
     final_groupname: "{{ item.groupname | default('') }}"
     final_description: "{{ item.description | default('') }}"
-    final_purpose: "{{ item.purpose | default('') }}"                   
+    final_purpose: "{{ item.purpose | default('') }}"
     
     # Auto-generate description จาก SR info + purpose
     auto_sr_description: "{{ item.auto_description | default('') }}"
-    purpose_suffix: "{{ (' - ' + final_purpose) if final_purpose != '' else '' }}"   
+    purpose_suffix: "{{ (' - ' + final_purpose) if final_purpose != '' else '' }}"
     final_comment: "{{ final_description if final_description != '' else (auto_sr_description + purpose_suffix if auto_sr_description != '' else 'Managed by Ansible') }}"
     
+    # แก้ไข home directory logic
+    computed_username: "{{ final_username if final_username != '' else random_username }}"
+    computed_home: "{{ final_home_dir if final_home_dir != '' else (home_base_path + '/' + computed_username) }}"
+    
     user_data:
-      name: "{{ final_username if final_username != '' else random_username }}"
+      name: "{{ computed_username }}"
       uid: "{{ final_uid if final_uid != '' else random_uid }}"
       group: "{{ final_gid if final_gid != '' else 'users' }}"
       password: "{{ final_password if final_password != '' else random_password }}"
-      home: "{{ (final_home_dir if final_home_dir != '' else home_base_path) + '/' + (final_username if final_username != '' else random_username) }}"
-      shell: "{{ item.shell | default(os_shell) }}"
+      home: "{{ computed_home }}"  # ← แก้ไขตรงนี้
+      shell: "{{ item.shell | default(default_shell) }}"
       groups: "{{ ([final_groupname] if final_groupname != '' else []) + (item.additional_groups | default([])) }}"
       comment: "{{ final_comment }}"
       sr_number: "{{ item.sr_info.sr_number | default('') }}"
       owner_name: "{{ item.sr_info.owner_name | default('') }}"
       tel: "{{ item.sr_info.tel | default('') }}"
-      email: "{{ item.sr_info.email | default('') }}"   
-      purpose: "{{ final_purpose }}"                                     
+      email: "{{ item.sr_info.email | default('') }}"
+      purpose: "{{ final_purpose }}"
       # Track what was generated
       random_password: "{{ final_password == '' }}"
       random_uid: "{{ final_uid == '' }}"
@@ -49,7 +53,7 @@
     name: "{{ item.name }}"
     uid: "{{ item.uid }}"
     group: "{{ item.group }}"
-    groups: "{{ item.groups | join(',') if item.groups | length > 0 else omit }}"   
+    groups: "{{ item.groups | join(',') if item.groups | length > 0 else omit }}"
     password: "{{ item.password | password_hash('sha512') }}"
     home: "{{ item.home }}"
     shell: "{{ item.shell }}"

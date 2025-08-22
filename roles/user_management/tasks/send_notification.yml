@@ -16,66 +16,133 @@
     - send_email_notification | bool
     - processed_users is defined
 
-- name: "Debug email groups"
-  ansible.builtin.debug:
-    msg: |
-      Email groups to process: {{ email_groups | length if email_groups is defined else 0 }}
-      Details: {{ email_groups }}
+# เพิ่ม task ตรวจสอบ mail commands
+- name: "Check available mail commands"
+  ansible.builtin.shell: |
+    if command -v /usr/sbin/sendmail >/dev/null 2>&1; then
+      echo "sendmail"
+    elif command -v sendmail >/dev/null 2>&1; then
+      echo "sendmail"
+    elif command -v /usr/bin/mail >/dev/null 2>&1; then
+      echo "mail"
+    elif command -v mail >/dev/null 2>&1; then
+      echo "mail"
+    else
+      echo "none"
+    fi
+  register: mail_command_check
+  changed_when: false
   when: 
     - send_email_notification | bool
     - email_groups is defined
+    - email_groups | length > 0
 
-- name: "Send email notification using sendmail"
+- name: "Debug mail command detection"
+  ansible.builtin.debug:
+    msg: "Detected mail command: {{ mail_command_check.stdout }}"
+  when: 
+    - send_email_notification | bool
+    - mail_command_check is defined
+
+- name: "Create email body for each SR"
+  ansible.builtin.copy:
+    dest: "/tmp/email_{{ item.value[0].sr_number }}.txt"
+    content: |
+      Dear {{ item.value[0].owner_name }},
+      
+      Your user account creation request ({{ item.value[0].sr_number }}) has been completed successfully.
+      
+      📋 Service Request Details:
+      ═══════════════════════════════════════════════════════════════
+      SR Number: {{ item.value[0].sr_number }}
+      Requester: {{ item.value[0].owner_name }}
+      Contact: {{ item.value[0].tel }}
+      Email: {{ item.key }}
+      Completion Date: {{ ansible_date_time.date }}
+      
+      👥 Created Users ({{ item.value | length }} users):
+      {% for user in item.value %}
+      ─────────────────────────────────────────────────────────────
+      👤 Username: {{ user.name }}
+         ├── UID: {{ user.uid }}{% if user.random_uid %} (Auto-generated){% endif %}
+         ├── Purpose: {{ user.purpose | default('Not specified') }}
+         ├── Primary Group: {{ user.group }}
+         ├── Additional Groups: {{ user.groups | join(', ') if user.groups | length > 0 else 'None' }}
+         ├── Home Directory: {{ user.home }}
+         ├── Shell: {{ user.shell }}
+         └── Password: {% if user.random_password %}{{ user.password }} ⚠️ SAVE THIS SECURELY!{% else %}As provided by requester{% endif %}
+      
+      {% endfor %}
+      🔒 Important Security Notes:
+      • Please change auto-generated passwords on first login
+      • Follow company security policies for password management
+      • Users must acknowledge receipt of this information
+      • Report any issues to IT Support immediately
+      
+      This notification was sent automatically by Ansible Automation Platform.
+      
+      Best regards,
+      IT Automation Team
+      Company Infrastructure Department
+    mode: '0644'
+  loop: "{{ email_groups | dict2items }}"
+  delegate_to: localhost
+  when: 
+    - send_email_notification | bool
+    - email_groups is defined
+    - email_groups | length > 0
+
+# ใช้ sendmail ถ้าพบ
+- name: "Send email using sendmail"
   ansible.builtin.shell: |
-    cat << 'MAIL_EOF' | /usr/sbin/sendmail -t
-    Subject: {{ email_subject_prefix | default('[Ansible]') }} - {{ item.value[0].sr_number }}
-    To: {{ item.key }}
-    From: {{ email_from | default('ansible@company.com') }}
-    Content-Type: text/plain; charset=UTF-8
-    
-    Dear {{ item.value[0].owner_name }},
-    
-    Your user account creation request ({{ item.value[0].sr_number }}) has been completed successfully.
-    
-    📋 Service Request Details:
-    ═══════════════════════════════════════════════════════════════
-    SR Number: {{ item.value[0].sr_number }}
-    Requester: {{ item.value[0].owner_name }}
-    Contact: {{ item.value[0].tel }}
-    Email: {{ item.key }}
-    Completion Date: {{ ansible_date_time.date }}
-    
-    👥 Created Users ({{ item.value | length }} users):
-    {% for user in item.value %}
-    ─────────────────────────────────────────────────────────────
-    👤 Username: {{ user.name }}
-       ├── UID: {{ user.uid }}{% if user.random_uid %} (Auto-generated){% endif %}
-       ├── Purpose: {{ user.purpose | default('Not specified') }}
-       ├── Primary Group: {{ user.group }}
-       ├── Additional Groups: {{ user.groups | join(', ') if user.groups | length > 0 else 'None' }}
-       ├── Home Directory: {{ user.home }}
-       ├── Shell: {{ user.shell }}
-       └── Password: {% if user.random_password %}{{ user.password }} ⚠️ SAVE THIS SECURELY!{% else %}As provided by requester{% endif %}
-    
-    {% endfor %}
-    🔒 Important Security Notes:
-    • Please change auto-generated passwords on first login
-    • Follow company security policies for password management
-    • Users must acknowledge receipt of this information
-    • Report any issues to IT Support immediately
-    
-    This notification was sent automatically by Ansible Automation Platform.
-    
-    Best regards,
-    IT Automation Team
-    Company Infrastructure Department
-    MAIL_EOF
+    (
+      echo "Subject: {{ email_subject_prefix | default('[Ansible]') }} - {{ item.value[0].sr_number }}"
+      echo "To: {{ item.key }}"
+      echo "From: {{ email_from | default('ansible@company.com') }}"
+      echo "Content-Type: text/plain; charset=UTF-8"
+      echo ""
+      cat "/tmp/email_{{ item.value[0].sr_number }}.txt"
+    ) | /usr/sbin/sendmail -t
   loop: "{{ email_groups | dict2items }}"
   when: 
     - send_email_notification | bool
     - email_groups is defined
     - email_groups | length > 0
+    - mail_command_check.stdout == 'sendmail'
   register: sendmail_result
+
+# ใช้ mail command ถ้าไม่มี sendmail
+- name: "Send email using mail command"
+  ansible.builtin.shell: |
+    cat "/tmp/email_{{ item.value[0].sr_number }}.txt" | /usr/bin/mail -s "{{ email_subject_prefix | default('[Ansible]') }} - {{ item.value[0].sr_number }}" "{{ item.key }}"
+  loop: "{{ email_groups | dict2items }}"
+  when: 
+    - send_email_notification | bool
+    - email_groups is defined
+    - email_groups | length > 0
+    - mail_command_check.stdout == 'mail'
+  register: mail_result
+
+# แจ้งเตือนถ้าไม่มี mail command
+- name: "Skip email - no mail command available"
+  ansible.builtin.debug:
+    msg: "⚠️ No mail command available (sendmail, mail). Skipping email notification."
+  when: 
+    - send_email_notification | bool
+    - email_groups is defined
+    - email_groups | length > 0
+    - mail_command_check.stdout == 'none'
+
+- name: "Clean up email files"
+  ansible.builtin.file:
+    path: "/tmp/email_{{ item.value[0].sr_number }}.txt"
+    state: absent
+  loop: "{{ email_groups | dict2items }}"
+  delegate_to: localhost
+  when: 
+    - send_email_notification | bool
+    - email_groups is defined
+    - email_groups | length > 0
 
 - name: "Display email notification summary"
   ansible.builtin.debug:
@@ -84,6 +151,7 @@
       📧 === EMAIL NOTIFICATION SUMMARY === 📧
       
       {% if send_email_notification | bool %}
+      Mail command detected: {{ mail_command_check.stdout if mail_command_check is defined else 'unknown' }}
       Email notifications sent: {{ email_groups | length if email_groups is defined else 0 }}
       
       Recipients:
@@ -91,14 +159,26 @@
       ✅ {{ email }} ({{ users[0].sr_number }}) - {{ users | length }} users created
       {% endfor %}
       
-      Sendmail Results:
-      {% for result in sendmail_result.results | default([]) %}
+      Results:
+      {% if sendmail_result is defined and sendmail_result.results is defined %}
+      {% for result in sendmail_result.results %}
       {% if result.rc == 0 %}
-      ✅ Email sent successfully to {{ result.item.key }}
+      ✅ Sendmail sent successfully to {{ result.item.key }}
       {% else %}
-      ❌ Email failed to {{ result.item.key }} (RC: {{ result.rc }}): {{ result.stderr | default('Unknown error') }}
+      ❌ Sendmail failed to {{ result.item.key }}: {{ result.stderr | default('Unknown error') }}
       {% endif %}
       {% endfor %}
+      {% elif mail_result is defined and mail_result.results is defined %}
+      {% for result in mail_result.results %}
+      {% if result.rc == 0 %}
+      ✅ Mail sent successfully to {{ result.item.key }}
+      {% else %}
+      ❌ Mail failed to {{ result.item.key }}: {{ result.stderr | default('Unknown error') }}
+      {% endif %}
+      {% endfor %}
+      {% else %}
+      📧 Email process completed
+      {% endif %}
       {% else %}
       📴 Email notifications disabled (send_email_notification: false)
       {% endif %}
