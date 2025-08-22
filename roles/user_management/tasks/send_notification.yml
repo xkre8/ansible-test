@@ -16,211 +16,45 @@
     - send_email_notification | bool
     - processed_users is defined
 
-- name: "Debug email groups"
-  ansible.builtin.debug:
-    msg: |
-      Email groups: {{ email_groups | length if email_groups is defined else 0 }}
-      {% if email_groups is defined and email_groups | length > 0 %}
-      {% for email, users in email_groups.items() %}
-      - {{ email }}: {{ users | length }} users
-      {% endfor %}
-      {% endif %}
-  when: 
-    - send_email_notification | bool
-    - email_groups is defined
-
-# เพิ่ม task ตรวจสอบ mail commands (แก้ไข condition)
-# เพิ่ม task ตรวจสอบ mail commands (แก้ไข condition)
-- name: "Check available mail commands"
-  ansible.builtin.shell: |
-    if [ -x /usr/sbin/sendmail ]; then
-      echo "sendmail"
-    elif [ -x /usr/bin/sendmail ]; then
-      echo "sendmail"  
-    elif command -v sendmail >/dev/null 2>&1; then
-      echo "sendmail"
-    elif [ -x /usr/bin/mail ]; then
-      echo "mail"
-    elif command -v mail >/dev/null 2>&1; then
-      echo "mail"
-    else
-      echo "none"
-    fi
-  register: mail_command_check
-  changed_when: false
-  when: 
-    - send_email_notification | bool
-    - email_groups is defined
-    - email_groups | length > 0
-
-- name: "Debug mail command detection details"
-  ansible.builtin.debug:
-    msg: |
-      Detection result: {{ mail_command_check.stdout }}
-      /usr/sbin/sendmail exists: {{ ansible_facts.get('sendmail_path_exists', 'unknown') }}
-      Let me check paths manually...
-  when: 
-    - send_email_notification | bool
-    - mail_command_check is defined
-
-# เพิ่ม manual check
-- name: "Manual check sendmail paths"
-  ansible.builtin.stat:
-    path: "{{ item }}"
-  register: sendmail_paths
-  loop:
-    - /usr/sbin/sendmail
-    - /usr/bin/sendmail
-    - /bin/sendmail
-  when: 
-    - send_email_notification | bool
-    - email_groups is defined
-    - email_groups | length > 0
-
-- name: "Debug sendmail paths"
-  ansible.builtin.debug:
-    msg: |
-      Sendmail path check:
-      {% for result in sendmail_paths.results %}
-      {{ result.item }}: {{ 'EXISTS' if result.stat.exists else 'NOT FOUND' }}{% if result.stat.exists %} (executable: {{ result.stat.executable }}){% endif %}
-      {% endfor %}
-  when: 
-    - send_email_notification | bool
-    - sendmail_paths is defined
-
-# แก้ไข condition ให้ใช้ manual check
-- name: "Set correct mail command"
-  ansible.builtin.set_fact:
-    actual_mail_command: >-
-      {% for result in sendmail_paths.results %}
-      {% if result.stat.exists and result.stat.executable %}
-      sendmail
-      {% break %}
-      {% endif %}
-      {% endfor %}{% if actual_mail_command is not defined %}mail{% endif %}
-  when: 
-    - send_email_notification | bool
-    - sendmail_paths is defined
-
-- name: "Debug final mail command"
-  ansible.builtin.debug:
-    msg: "Using mail command: {{ actual_mail_command | default('none') }}"
-  when: 
-    - send_email_notification | bool
-    - actual_mail_command is defined
-
-- name: "Debug mail command detection"
-  ansible.builtin.debug:
-    msg: "Detected mail command: {{ mail_command_check.stdout }}"
-  when: 
-    - send_email_notification | bool
-    - mail_command_check is defined
-
-- name: "Create email body for each SR"
-  ansible.builtin.copy:
-    dest: "/tmp/email_{{ item.value[0].sr_number }}.txt"
-    content: |
+- name: "Send email notification for each SR"
+  community.general.mail:
+    to: "{{ item.key }}"
+    from: "{{ email_from | default('ansible@company.com') }}"
+    subject: "{{ email_subject_prefix | default('[Ansible]') }} - {{ item.value[0].sr_number }}"
+    body: "{{ email_body }}"
+    host: "{{ smtp_host | default('localhost') }}"
+    port: "{{ smtp_port | default(25) }}"
+    username: "{{ smtp_username | default(omit) }}"
+    password: "{{ smtp_password | default(omit) }}"
+    secure: "{{ 'starttls' if smtp_port == 587 else 'never' }}"
+  vars:
+    email_body: |
       Dear {{ item.value[0].owner_name }},
       
       Your user account creation request ({{ item.value[0].sr_number }}) has been completed successfully.
       
       📋 Service Request Details:
-      ═══════════════════════════════════════════════════════════════
       SR Number: {{ item.value[0].sr_number }}
       Requester: {{ item.value[0].owner_name }}
       Contact: {{ item.value[0].tel }}
       Email: {{ item.key }}
-      Completion Date: {{ ansible_date_time.date }}
       
-      👥 Created Users ({{ item.value | length }} users):
+      👥 Created Users:
       {% for user in item.value %}
-      ─────────────────────────────────────────────────────────────
-      👤 Username: {{ user.name }}
-         ├── UID: {{ user.uid }}{% if user.random_uid %} (Auto-generated){% endif %}
-         ├── Purpose: {{ user.purpose | default('Not specified') }}
-         ├── Primary Group: {{ user.group }}
-         ├── Additional Groups: {{ user.groups | join(', ') if user.groups | length > 0 else 'None' }}
-         ├── Home Directory: {{ user.home }}
-         ├── Shell: {{ user.shell }}
-         └── Password: {% if user.random_password %}{{ user.password }} ⚠️ SAVE THIS SECURELY!{% else %}As provided by requester{% endif %}
-      
+      👤 {{ user.name }} ({{ user.purpose | default('Not specified') }})
+         Password: {% if user.random_password %}{{ user.password }} ⚠️ SAVE THIS!{% else %}As provided{% endif %}
       {% endfor %}
-      🔒 Important Security Notes:
-      • Please change auto-generated passwords on first login
-      • Follow company security policies for password management
-      • Users must acknowledge receipt of this information
-      • Report any issues to IT Support immediately
-      
-      This notification was sent automatically by Ansible Automation Platform.
       
       Best regards,
       IT Automation Team
-      Company Infrastructure Department
-    mode: '0644'
-  loop: "{{ email_groups | dict2items }}"
-  delegate_to: localhost
-  when: 
-    - send_email_notification | bool
-    - email_groups is defined
-    - email_groups | length > 0
-    - mail_command_check is defined
-
-# ใช้ sendmail ถ้าพบ
-- name: "Send email using sendmail"
-  ansible.builtin.shell: |
-    (
-      echo "Subject: {{ email_subject_prefix | default('[Ansible]') }} - {{ item.value[0].sr_number }}"
-      echo "To: {{ item.key }}"
-      echo "From: {{ email_from | default('ansible@company.com') }}"
-      echo "Content-Type: text/plain; charset=UTF-8"
-      echo ""
-      cat "/tmp/email_{{ item.value[0].sr_number }}.txt"
-    ) | /usr/sbin/sendmail -t
   loop: "{{ email_groups | dict2items }}"
   when: 
     - send_email_notification | bool
     - email_groups is defined
     - email_groups | length > 0
-    - mail_command_check is defined
-    - mail_command_check.stdout == 'sendmail'
-  register: sendmail_result
-
-# ใช้ mail command ถ้าไม่มี sendmail
-- name: "Send email using mail command"
-  ansible.builtin.shell: |
-    cat "/tmp/email_{{ item.value[0].sr_number }}.txt" | /usr/bin/mail -s "{{ email_subject_prefix | default('[Ansible]') }} - {{ item.value[0].sr_number }}" "{{ item.key }}"
-  loop: "{{ email_groups | dict2items }}"
-  when: 
-    - send_email_notification | bool
-    - email_groups is defined
-    - email_groups | length > 0
-    - mail_command_check is defined
-    - mail_command_check.stdout == 'mail'
   register: mail_result
-
-# แจ้งเตือนถ้าไม่มี mail command
-- name: "Skip email - no mail command available"
-  ansible.builtin.debug:
-    msg: "⚠️ No mail command available (sendmail, mail). Skipping email notification."
-  when: 
-    - send_email_notification | bool
-    - email_groups is defined
-    - email_groups | length > 0
-    - mail_command_check is defined
-    - mail_command_check.stdout == 'none'
-
-- name: "Clean up email files"
-  ansible.builtin.file:
-    path: "/tmp/email_{{ item.value[0].sr_number }}.txt"
-    state: absent
-  loop: "{{ email_groups | dict2items }}"
   delegate_to: localhost
-  when: 
-    - send_email_notification | bool
-    - email_groups is defined
-    - email_groups | length > 0
 
-# แก้ไข summary (ลบ .rc ที่ทำให้ error)
 - name: "Display email notification summary"
   ansible.builtin.debug:
     msg: |
@@ -228,8 +62,7 @@
       📧 === EMAIL NOTIFICATION SUMMARY === 📧
       
       {% if send_email_notification | bool %}
-      Mail command detected: {{ mail_command_check.stdout if mail_command_check is defined else 'not checked' }}
-      Email groups found: {{ email_groups | length if email_groups is defined else 0 }}
+      Email notifications sent: {{ email_groups | length if email_groups is defined else 0 }}
       
       {% if email_groups is defined and email_groups | length > 0 %}
       Recipients:
@@ -237,12 +70,15 @@
       ✅ {{ email }} ({{ users[0].sr_number }}) - {{ users | length }} users created
       {% endfor %}
       
-      {% if sendmail_result is defined %}
-      Sendmail Results: {{ sendmail_result.results | length }} emails processed
-      {% elif mail_result is defined %}
-      Mail Results: {{ mail_result.results | length }} emails processed  
+      {% if mail_result is defined and mail_result.results is defined %}
+      Mail Results:
+      {% for result in mail_result.results %}
+      {% if result.failed is defined and not result.failed %}
+      ✅ Email sent successfully to {{ result.item.key }}
       {% else %}
-      No emails sent (conditions not met)
+      ❌ Email failed to {{ result.item.key }}: {{ result.msg | default('Unknown error') }}
+      {% endif %}
+      {% endfor %}
       {% endif %}
       {% else %}
       No email groups to process
