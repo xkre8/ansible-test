@@ -16,32 +16,48 @@
     - send_email_notification | bool
     - processed_users is defined
 
-- name: "Generate email body from template"
-  ansible.builtin.template:
-    src: email_notification.j2
-    dest: "/tmp/email_{{ item.value[0].sr_number }}_{{ ansible_date_time.epoch }}.txt"
-  vars:
-    sr_number: "{{ item.value[0].sr_number }}"
-    owner_name: "{{ item.value[0].owner_name }}"
-    tel: "{{ item.value[0].tel }}"
-    email: "{{ item.key }}"
-    users: "{{ item.value }}"
-  loop: "{{ email_groups | dict2items }}"
-  delegate_to: localhost
-  when: 
-    - send_email_notification | bool
-    - email_groups is defined
-    - email_groups | length > 0
-
 - name: "Send email notification using sendmail"
   ansible.builtin.shell: |
     cat << 'EOF' | /usr/sbin/sendmail -t
-    Subject: {{ email_subject_prefix }} - {{ item.value[0].sr_number }}
+    Subject: {{ email_subject_prefix | default('[Ansible]') }} User Account Created - {{ item.value[0].sr_number }}
     To: {{ item.key }}
-    From: {{ email_from }}
+    From: {{ email_from | default('ansible@company.com') }}
     Content-Type: text/plain; charset=UTF-8
     
-    {{ lookup('file', '/tmp/email_' + item.value[0].sr_number + '_' + ansible_date_time.epoch + '.txt') }}
+    Dear {{ item.value[0].owner_name }},
+    
+    Your user account creation request ({{ item.value[0].sr_number }}) has been completed successfully.
+    
+    📋 Service Request Details:
+    ═══════════════════════════════════════════════════════════════
+    SR Number: {{ item.value[0].sr_number }}
+    Requester: {{ item.value[0].owner_name }}
+    Contact: {{ item.value[0].tel }}
+    Email: {{ item.key }}
+    Completion Date: {{ ansible_date_time.date }}
+    
+    👥 Created Users ({{ item.value | length }} users):
+    {% for user in item.value %}
+    ─────────────────────────────────────────────────────────────
+    👤 Username: {{ user.name }}
+       ├── UID: {{ user.uid }}{% if user.random_uid %} (Auto-generated){% endif %}
+       ├── Purpose: {{ user.purpose if user.purpose != '' else 'Not specified' }}
+       ├── Primary Group: {{ user.group }}
+       ├── Additional Groups: {{ user.groups | join(', ') if user.groups | length > 0 else 'None' }}
+       ├── Home Directory: {{ user.home }}
+       ├── Shell: {{ user.shell }}
+       └── Password: {% if user.random_password %}{{ user.password }} ⚠️ SAVE THIS SECURELY!{% else %}As provided by requester{% endif %}
+    
+    {% endfor %}
+    
+    🔒 Important Security Notes:
+    • Please change auto-generated passwords on first login
+    • Follow company security policies for password management
+    • Users must acknowledge receipt of this information
+    • Report any issues to IT Support immediately
+    
+    Best regards,
+    IT Automation Team
     EOF
   loop: "{{ email_groups | dict2items }}"
   when: 
@@ -49,17 +65,6 @@
     - email_groups is defined
     - email_groups | length > 0
   register: sendmail_result
-
-- name: "Clean up temporary email files"
-  ansible.builtin.file:
-    path: "/tmp/email_{{ item.value[0].sr_number }}_{{ ansible_date_time.epoch }}.txt"
-    state: absent
-  loop: "{{ email_groups | dict2items }}"
-  delegate_to: localhost
-  when: 
-    - send_email_notification | bool
-    - email_groups is defined
-    - email_groups | length > 0
 
 - name: "Display email notification summary"
   ansible.builtin.debug:
