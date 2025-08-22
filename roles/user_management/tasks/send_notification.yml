@@ -16,7 +16,20 @@
     - send_email_notification | bool
     - processed_users is defined
 
-# เพิ่ม task ตรวจสอบ mail commands
+- name: "Debug email groups"
+  ansible.builtin.debug:
+    msg: |
+      Email groups: {{ email_groups | length if email_groups is defined else 0 }}
+      {% if email_groups is defined and email_groups | length > 0 %}
+      {% for email, users in email_groups.items() %}
+      - {{ email }}: {{ users | length }} users
+      {% endfor %}
+      {% endif %}
+  when: 
+    - send_email_notification | bool
+    - email_groups is defined
+
+# เพิ่ม task ตรวจสอบ mail commands (แก้ไข condition)
 - name: "Check available mail commands"
   ansible.builtin.shell: |
     if command -v /usr/sbin/sendmail >/dev/null 2>&1; then
@@ -35,7 +48,7 @@
   when: 
     - send_email_notification | bool
     - email_groups is defined
-    - email_groups | length > 0
+    - email_groups | length > 0  # แก้ไขตรงนี้
 
 - name: "Debug mail command detection"
   ansible.builtin.debug:
@@ -91,6 +104,7 @@
     - send_email_notification | bool
     - email_groups is defined
     - email_groups | length > 0
+    - mail_command_check is defined
 
 # ใช้ sendmail ถ้าพบ
 - name: "Send email using sendmail"
@@ -108,6 +122,7 @@
     - send_email_notification | bool
     - email_groups is defined
     - email_groups | length > 0
+    - mail_command_check is defined
     - mail_command_check.stdout == 'sendmail'
   register: sendmail_result
 
@@ -120,6 +135,7 @@
     - send_email_notification | bool
     - email_groups is defined
     - email_groups | length > 0
+    - mail_command_check is defined
     - mail_command_check.stdout == 'mail'
   register: mail_result
 
@@ -131,6 +147,7 @@
     - send_email_notification | bool
     - email_groups is defined
     - email_groups | length > 0
+    - mail_command_check is defined
     - mail_command_check.stdout == 'none'
 
 - name: "Clean up email files"
@@ -144,6 +161,7 @@
     - email_groups is defined
     - email_groups | length > 0
 
+# แก้ไข summary (ลบ .rc ที่ทำให้ error)
 - name: "Display email notification summary"
   ansible.builtin.debug:
     msg: |
@@ -151,33 +169,24 @@
       📧 === EMAIL NOTIFICATION SUMMARY === 📧
       
       {% if send_email_notification | bool %}
-      Mail command detected: {{ mail_command_check.stdout if mail_command_check is defined else 'unknown' }}
-      Email notifications sent: {{ email_groups | length if email_groups is defined else 0 }}
+      Mail command detected: {{ mail_command_check.stdout if mail_command_check is defined else 'not checked' }}
+      Email groups found: {{ email_groups | length if email_groups is defined else 0 }}
       
+      {% if email_groups is defined and email_groups | length > 0 %}
       Recipients:
-      {% for email, users in (email_groups | default({})).items() %}
+      {% for email, users in email_groups.items() %}
       ✅ {{ email }} ({{ users[0].sr_number }}) - {{ users | length }} users created
       {% endfor %}
       
-      Results:
-      {% if sendmail_result is defined and sendmail_result.results is defined %}
-      {% for result in sendmail_result.results %}
-      {% if result.rc == 0 %}
-      ✅ Sendmail sent successfully to {{ result.item.key }}
+      {% if sendmail_result is defined %}
+      Sendmail Results: {{ sendmail_result.results | length }} emails processed
+      {% elif mail_result is defined %}
+      Mail Results: {{ mail_result.results | length }} emails processed  
       {% else %}
-      ❌ Sendmail failed to {{ result.item.key }}: {{ result.stderr | default('Unknown error') }}
+      No emails sent (conditions not met)
       {% endif %}
-      {% endfor %}
-      {% elif mail_result is defined and mail_result.results is defined %}
-      {% for result in mail_result.results %}
-      {% if result.rc == 0 %}
-      ✅ Mail sent successfully to {{ result.item.key }}
       {% else %}
-      ❌ Mail failed to {{ result.item.key }}: {{ result.stderr | default('Unknown error') }}
-      {% endif %}
-      {% endfor %}
-      {% else %}
-      📧 Email process completed
+      No email groups to process
       {% endif %}
       {% else %}
       📴 Email notifications disabled (send_email_notification: false)
