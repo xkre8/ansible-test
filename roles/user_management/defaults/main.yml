@@ -24,6 +24,22 @@ send_email_notification: true
 email_from: "zero.blank32@gmail.com"
 email_subject_prefix: "[IT Automation] User Account Created"
 
+
+# SMTP Configuration
+smtp_host: "localhost"              # ใช้ local sendmail
+smtp_port: 25                       # SMTP port
+smtp_username: ""                   # ถ้าไม่ต้อง auth ให้ว่างไว้
+smtp_password: ""                   # ถ้าไม่ต้อง auth ให้ว่างไว้
+smtp_secure: "try"                  # try, never, always, starttls
+
+# หรือใช้ external SMTP (Gmail)
+# smtp_host: "smtp.gmail.com"
+# smtp_port: 587
+# smtp_username: "your-email@gmail.com"
+# smtp_password: "your-app-password"
+# smtp_secure: "starttls"
+
+
 # service_requests_yml: |
 #   - sr_number: "SR005"
 #     owner_name: "John Doe"

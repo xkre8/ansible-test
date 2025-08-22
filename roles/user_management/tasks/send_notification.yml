@@ -16,55 +16,65 @@
     - send_email_notification | bool
     - processed_users is defined
 
-- name: "Send email notification using sendmail"
-  ansible.builtin.shell: |
-    cat << 'EOF' | /usr/sbin/sendmail -t
-    Subject: {{ email_subject_prefix | default('[Ansible]') }} User Account Created - {{ item.value[0].sr_number }}
-    To: {{ item.key }}
-    From: {{ email_from | default('ansible@company.com') }}
-    Content-Type: text/plain; charset=UTF-8
-    
-    Dear {{ item.value[0].owner_name }},
-    
-    Your user account creation request ({{ item.value[0].sr_number }}) has been completed successfully.
-    
-    📋 Service Request Details:
-    ═══════════════════════════════════════════════════════════════
-    SR Number: {{ item.value[0].sr_number }}
-    Requester: {{ item.value[0].owner_name }}
-    Contact: {{ item.value[0].tel }}
-    Email: {{ item.key }}
-    Completion Date: {{ ansible_date_time.date }}
-    
-    👥 Created Users ({{ item.value | length }} users):
-    {% for user in item.value %}
-    ─────────────────────────────────────────────────────────────
-    👤 Username: {{ user.name }}
-       ├── UID: {{ user.uid }}{% if user.random_uid %} (Auto-generated){% endif %}
-       ├── Purpose: {{ user.purpose if user.purpose != '' else 'Not specified' }}
-       ├── Primary Group: {{ user.group }}
-       ├── Additional Groups: {{ user.groups | join(', ') if user.groups | length > 0 else 'None' }}
-       ├── Home Directory: {{ user.home }}
-       ├── Shell: {{ user.shell }}
-       └── Password: {% if user.random_password %}{{ user.password }} ⚠️ SAVE THIS SECURELY!{% else %}As provided by requester{% endif %}
-    
-    {% endfor %}
-    
-    🔒 Important Security Notes:
-    • Please change auto-generated passwords on first login
-    • Follow company security policies for password management
-    • Users must acknowledge receipt of this information
-    • Report any issues to IT Support immediately
-    
-    Best regards,
-    IT Automation Team
-    EOF
+- name: "Send email notification using mail module"
+  community.general.mail:
+    to: "{{ item.key }}"
+    from: "{{ email_from | default('ansible@company.com') }}"
+    subject: "{{ email_subject_prefix | default('[Ansible]') }} - {{ item.value[0].sr_number }}"
+    body: |
+      Dear {{ item.value[0].owner_name }},
+      
+      Your user account creation request ({{ item.value[0].sr_number }}) has been completed successfully.
+      
+      📋 Service Request Details:
+      ═══════════════════════════════════════════════════════════════
+      SR Number: {{ item.value[0].sr_number }}
+      Requester: {{ item.value[0].owner_name }}
+      Contact: {{ item.value[0].tel }}
+      Email: {{ item.key }}
+      Completion Date: {{ ansible_date_time.date }}
+      
+      👥 Created Users ({{ item.value | length }} users):
+      {% for user in item.value %}
+      ─────────────────────────────────────────────────────────────
+      👤 Username: {{ user.name }}
+         ├── UID: {{ user.uid }}{% if user.random_uid %} (Auto-generated){% endif %}
+         ├── Purpose: {{ user.purpose if user.purpose != '' else 'Not specified' }}
+         ├── Primary Group: {{ user.group }}
+         ├── Additional Groups: {{ user.groups | join(', ') if user.groups | length > 0 else 'None' }}
+         ├── Home Directory: {{ user.home }}
+         ├── Shell: {{ user.shell }}
+         └── Password: {% if user.random_password %}{{ user.password }} ⚠️ SAVE THIS SECURELY!{% else %}As provided by requester{% endif %}
+      
+      {% endfor %}
+      
+      🔒 Important Security Notes:
+      • Please change auto-generated passwords on first login
+      • Follow company security policies for password management
+      • Users must acknowledge receipt of this information
+      • Report any issues to IT Support immediately
+      
+      📞 Support Contact:
+      • IT Helpdesk: +66-2-xxx-xxxx
+      • Email: support@company.com
+      
+      Best regards,
+      IT Automation Team
+      Company Infrastructure Department
+    # SMTP Configuration
+    host: "{{ smtp_host | default('localhost') }}"
+    port: "{{ smtp_port | default(25) }}"
+    username: "{{ smtp_username | default(omit) }}"
+    password: "{{ smtp_password | default(omit) }}"
+    secure: "{{ smtp_secure | default('try') }}"
+    charset: utf8
   loop: "{{ email_groups | dict2items }}"
   when: 
     - send_email_notification | bool
     - email_groups is defined
     - email_groups | length > 0
-  register: sendmail_result
+  register: mail_result
+  delegate_to: localhost
 
 - name: "Display email notification summary"
   ansible.builtin.debug:
@@ -80,12 +90,12 @@
       ✅ {{ email }} ({{ users[0].sr_number }}) - {{ users | length }} users created
       {% endfor %}
       
-      Sendmail Results:
-      {% for result in sendmail_result.results | default([]) %}
-      {% if result.rc == 0 %}
-      ✅ Email sent successfully
+      Mail Module Results:
+      {% for result in mail_result.results | default([]) %}
+      {% if result.failed is defined and result.failed %}
+      ❌ Email failed: {{ result.msg | default('Unknown error') }}
       {% else %}
-      ❌ Email failed: {{ result.stderr }}
+      ✅ Email sent successfully
       {% endif %}
       {% endfor %}
       {% else %}
