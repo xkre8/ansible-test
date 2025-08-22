@@ -35,6 +35,7 @@
       sr_number: "{{ item.sr_info.sr_number | default('') }}"
       owner_name: "{{ item.sr_info.owner_name | default('') }}"
       tel: "{{ item.sr_info.tel | default('') }}"
+      # email: "{{ item.sr_info.email | default('') }}"   
       purpose: "{{ final_purpose }}"                                     
       # Track what was generated
       random_password: "{{ final_password == '' }}"

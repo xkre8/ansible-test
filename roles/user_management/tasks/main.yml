@@ -10,3 +10,7 @@
 
 - name: "Display report"
   ansible.builtin.include_tasks: report.yml
+
+- name: "Send email notifications"
+  ansible.builtin.include_tasks: send_notification.yml
+  when: send_email_notification | bool

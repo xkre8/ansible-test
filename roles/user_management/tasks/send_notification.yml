@@ -1,0 +1,89 @@
+---
+- name: "Group users by email for notification"
+  ansible.builtin.set_fact:
+    email_groups: >-
+      {%- set result = {} -%}
+      {%- for user in processed_users | default([]) -%}
+        {%- if user.email != '' -%}
+          {%- if user.email not in result -%}
+            {%- set _ = result.update({user.email: []}) -%}
+          {%- endif -%}
+          {%- set _ = result[user.email].append(user) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ result }}
+  when: 
+    - send_email_notification | bool
+    - processed_users is defined
+
+- name: "Generate email body from template"
+  ansible.builtin.template:
+    src: email_notification.j2
+    dest: "/tmp/email_{{ item.value[0].sr_number }}_{{ ansible_date_time.epoch }}.txt"
+  vars:
+    sr_number: "{{ item.value[0].sr_number }}"
+    owner_name: "{{ item.value[0].owner_name }}"
+    tel: "{{ item.value[0].tel }}"
+    email: "{{ item.key }}"
+    users: "{{ item.value }}"
+  loop: "{{ email_groups | dict2items }}"
+  delegate_to: localhost
+  when: 
+    - send_email_notification | bool
+    - email_groups is defined
+    - email_groups | length > 0
+
+- name: "Send email notification using sendmail"
+  ansible.builtin.shell: |
+    cat << 'EOF' | /usr/sbin/sendmail -t
+    Subject: {{ email_subject_prefix }} - {{ item.value[0].sr_number }}
+    To: {{ item.key }}
+    From: {{ email_from }}
+    Content-Type: text/plain; charset=UTF-8
+    
+    {{ lookup('file', '/tmp/email_' + item.value[0].sr_number + '_' + ansible_date_time.epoch + '.txt') }}
+    EOF
+  loop: "{{ email_groups | dict2items }}"
+  when: 
+    - send_email_notification | bool
+    - email_groups is defined
+    - email_groups | length > 0
+  register: sendmail_result
+
+- name: "Clean up temporary email files"
+  ansible.builtin.file:
+    path: "/tmp/email_{{ item.value[0].sr_number }}_{{ ansible_date_time.epoch }}.txt"
+    state: absent
+  loop: "{{ email_groups | dict2items }}"
+  delegate_to: localhost
+  when: 
+    - send_email_notification | bool
+    - email_groups is defined
+    - email_groups | length > 0
+
+- name: "Display email notification summary"
+  ansible.builtin.debug:
+    msg: |
+      
+      📧 === EMAIL NOTIFICATION SUMMARY === 📧
+      
+      {% if send_email_notification | bool %}
+      Email notifications sent: {{ email_groups | length if email_groups is defined else 0 }}
+      
+      Recipients:
+      {% for email, users in (email_groups | default({})).items() %}
+      ✅ {{ email }} ({{ users[0].sr_number }}) - {{ users | length }} users created
+      {% endfor %}
+      
+      Sendmail Results:
+      {% for result in sendmail_result.results | default([]) %}
+      {% if result.rc == 0 %}
+      ✅ Email sent successfully
+      {% else %}
+      ❌ Email failed: {{ result.stderr }}
+      {% endif %}
+      {% endfor %}
+      {% else %}
+      📴 Email notifications disabled (send_email_notification: false)
+      {% endif %}
+  when: processed_users is defined
