@@ -30,13 +30,16 @@
     - email_groups is defined
 
 # เพิ่ม task ตรวจสอบ mail commands (แก้ไข condition)
+# เพิ่ม task ตรวจสอบ mail commands (แก้ไข condition)
 - name: "Check available mail commands"
   ansible.builtin.shell: |
-    if command -v /usr/sbin/sendmail >/dev/null 2>&1; then
+    if [ -x /usr/sbin/sendmail ]; then
       echo "sendmail"
+    elif [ -x /usr/bin/sendmail ]; then
+      echo "sendmail"  
     elif command -v sendmail >/dev/null 2>&1; then
       echo "sendmail"
-    elif command -v /usr/bin/mail >/dev/null 2>&1; then
+    elif [ -x /usr/bin/mail ]; then
       echo "mail"
     elif command -v mail >/dev/null 2>&1; then
       echo "mail"
@@ -48,7 +51,63 @@
   when: 
     - send_email_notification | bool
     - email_groups is defined
-    - email_groups | length > 0  # แก้ไขตรงนี้
+    - email_groups | length > 0
+
+- name: "Debug mail command detection details"
+  ansible.builtin.debug:
+    msg: |
+      Detection result: {{ mail_command_check.stdout }}
+      /usr/sbin/sendmail exists: {{ ansible_facts.get('sendmail_path_exists', 'unknown') }}
+      Let me check paths manually...
+  when: 
+    - send_email_notification | bool
+    - mail_command_check is defined
+
+# เพิ่ม manual check
+- name: "Manual check sendmail paths"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  register: sendmail_paths
+  loop:
+    - /usr/sbin/sendmail
+    - /usr/bin/sendmail
+    - /bin/sendmail
+  when: 
+    - send_email_notification | bool
+    - email_groups is defined
+    - email_groups | length > 0
+
+- name: "Debug sendmail paths"
+  ansible.builtin.debug:
+    msg: |
+      Sendmail path check:
+      {% for result in sendmail_paths.results %}
+      {{ result.item }}: {{ 'EXISTS' if result.stat.exists else 'NOT FOUND' }}{% if result.stat.exists %} (executable: {{ result.stat.executable }}){% endif %}
+      {% endfor %}
+  when: 
+    - send_email_notification | bool
+    - sendmail_paths is defined
+
+# แก้ไข condition ให้ใช้ manual check
+- name: "Set correct mail command"
+  ansible.builtin.set_fact:
+    actual_mail_command: >-
+      {% for result in sendmail_paths.results %}
+      {% if result.stat.exists and result.stat.executable %}
+      sendmail
+      {% break %}
+      {% endif %}
+      {% endfor %}{% if actual_mail_command is not defined %}mail{% endif %}
+  when: 
+    - send_email_notification | bool
+    - sendmail_paths is defined
+
+- name: "Debug final mail command"
+  ansible.builtin.debug:
+    msg: "Using mail command: {{ actual_mail_command | default('none') }}"
+  when: 
+    - send_email_notification | bool
+    - actual_mail_command is defined
 
 - name: "Debug mail command detection"
   ansible.builtin.debug:
