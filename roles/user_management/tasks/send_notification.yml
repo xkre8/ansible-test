@@ -16,9 +16,60 @@
     - send_email_notification | bool
     - processed_users is defined
 
+- name: "Debug email groups"
+  ansible.builtin.debug:
+    msg: |
+      Email groups to process: {{ email_groups | length if email_groups is defined else 0 }}
+      Details: {{ email_groups }}
+  when: 
+    - send_email_notification | bool
+    - email_groups is defined
+
 - name: "Send email notification using sendmail"
   ansible.builtin.shell: |
-    echo -e "Subject: {{ email_subject_prefix | default('[Ansible]') }} - {{ item.value[0].sr_number }}\nTo: {{ item.key }}\nFrom: {{ email_from | default('ansible@company.com') }}\n\nDear {{ item.value[0].owner_name }},\n\nUser account creation request ({{ item.value[0].sr_number }}) completed successfully.\n\n📋 SR Details:\nSR Number: {{ item.value[0].sr_number }}\nRequester: {{ item.value[0].owner_name }}\nContact: {{ item.value[0].tel }}\nEmail: {{ item.key }}\nDate: {{ ansible_date_time.date }}\n\n👥 Created Users:\n{% for user in item.value %}👤 {{ user.name }} (UID: {{ user.uid }})\n   Purpose: {{ user.purpose | default('Not specified') }}\n   Group: {{ user.group }}\n   Additional Groups: {{ user.groups | join(', ') if user.groups | length > 0 else 'None' }}\n   Home: {{ user.home }}\n   Password: {% if user.random_password %}{{ user.password }} ⚠️ SAVE THIS!{% else %}User provided{% endif %}\n\n{% endfor %}🔒 Security Notes:\n• Change auto-generated passwords on first login\n• Follow company security policies\n\nBest regards,\nIT Automation Team" | /usr/sbin/sendmail -t
+    cat << 'MAIL_EOF' | /usr/sbin/sendmail -t
+    Subject: {{ email_subject_prefix | default('[Ansible]') }} - {{ item.value[0].sr_number }}
+    To: {{ item.key }}
+    From: {{ email_from | default('ansible@company.com') }}
+    Content-Type: text/plain; charset=UTF-8
+    
+    Dear {{ item.value[0].owner_name }},
+    
+    Your user account creation request ({{ item.value[0].sr_number }}) has been completed successfully.
+    
+    📋 Service Request Details:
+    ═══════════════════════════════════════════════════════════════
+    SR Number: {{ item.value[0].sr_number }}
+    Requester: {{ item.value[0].owner_name }}
+    Contact: {{ item.value[0].tel }}
+    Email: {{ item.key }}
+    Completion Date: {{ ansible_date_time.date }}
+    
+    👥 Created Users ({{ item.value | length }} users):
+    {% for user in item.value %}
+    ─────────────────────────────────────────────────────────────
+    👤 Username: {{ user.name }}
+       ├── UID: {{ user.uid }}{% if user.random_uid %} (Auto-generated){% endif %}
+       ├── Purpose: {{ user.purpose | default('Not specified') }}
+       ├── Primary Group: {{ user.group }}
+       ├── Additional Groups: {{ user.groups | join(', ') if user.groups | length > 0 else 'None' }}
+       ├── Home Directory: {{ user.home }}
+       ├── Shell: {{ user.shell }}
+       └── Password: {% if user.random_password %}{{ user.password }} ⚠️ SAVE THIS SECURELY!{% else %}As provided by requester{% endif %}
+    
+    {% endfor %}
+    🔒 Important Security Notes:
+    • Please change auto-generated passwords on first login
+    • Follow company security policies for password management
+    • Users must acknowledge receipt of this information
+    • Report any issues to IT Support immediately
+    
+    This notification was sent automatically by Ansible Automation Platform.
+    
+    Best regards,
+    IT Automation Team
+    Company Infrastructure Department
+    MAIL_EOF
   loop: "{{ email_groups | dict2items }}"
   when: 
     - send_email_notification | bool
@@ -43,9 +94,9 @@
       Sendmail Results:
       {% for result in sendmail_result.results | default([]) %}
       {% if result.rc == 0 %}
-      ✅ Email sent successfully
+      ✅ Email sent successfully to {{ result.item.key }}
       {% else %}
-      ❌ Email failed (RC: {{ result.rc }}): {{ result.stderr | default('Unknown error') }}
+      ❌ Email failed to {{ result.item.key }} (RC: {{ result.rc }}): {{ result.stderr | default('Unknown error') }}
       {% endif %}
       {% endfor %}
       {% else %}
