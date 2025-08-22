@@ -313,3 +313,49 @@ filesystem_config: |
 ---
 
 ## 🎯 Best Practices
+
+```yaml
+# Minimal survey questions
+spec:
+  - question_name: "Volume Group Strategy"
+    variable: "vg_strategy"
+    type: "multiplechoice"
+    choices: ["create_new", "use_existing", "extend_existing"]
+    default: "create_new"
+
+  - question_name: "Volume Group Name"
+    variable: "volume_group_name"
+    type: "text"
+    default: "vg_data"
+
+  - question_name: "Physical Volume Strategy"
+    variable: "pv_strategy"
+    type: "multiplechoice"
+    choices: ["create_new_pv", "use_existing_pv"]
+    default: "create_new_pv"
+
+  - question_name: "Disk Name (for new PV)"
+    variable: "selected_disk_name"
+    type: "text"
+    default: ""
+
+  - question_name: "Manual Device Path"
+    variable: "manual_lvm_device" 
+    type: "text"
+    default: ""
+
+  - question_name: "Existing PV Device"
+    variable: "existing_pv_device"
+    type: "text"
+    default: ""
+
+  - question_name: "Filesystem Configuration"
+    variable: "filesystem_config"
+    type: "textarea"
+    default: |
+      - path: /data
+        lv_name: lv_data
+        size_mb: 5000
+        fstype: xfs
+
+```
