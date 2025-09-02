@@ -21,6 +21,7 @@
   when: 
     - partition_strategy == 'create_partition'
     - disk_info is defined
+    - disk_info.stdout is defined
 
 - name: Check if partition already exists
   ansible.builtin.shell: |
@@ -65,6 +66,7 @@
   register: partition_creation
   when: 
     - partition_strategy == 'create_partition'
+    - existing_partition_check is defined
     - existing_partition_check.stdout == 'no_partition'
 
 - name: Get created partition device
@@ -82,19 +84,34 @@
 
 - name: Set partition as target device
   ansible.builtin.set_fact:
-    target_device: "{{ created_partition.stdout if partition_strategy == 'create_partition' else base_disk }}"
-  when: created_partition is defined
+    target_device: "{{ created_partition.stdout if (partition_strategy == 'create_partition' and created_partition is defined and created_partition.stdout is defined) else base_disk }}"
+  when: 
+    - base_disk is defined
+    - base_disk != ""
 
 - name: Display partition result
   ansible.builtin.debug:
     msg: |
       Partition Strategy: {{ partition_strategy }}
+      Base disk: {{ base_disk | default('undefined') }}
+      Target device: {{ target_device | default('undefined') }}
       {% if partition_strategy == 'create_partition' %}
-      Base disk: {{ base_disk }}
-      Created partition: {{ target_device }}
       Partition size: {{ partition_size_gb }}GB
+      
+      {% if partition_creation is defined and partition_creation.stdout is defined %}
       Partition creation output:
-      {{ partition_creation.stdout if partition_creation is defined else 'No creation output' }}
+      {{ partition_creation.stdout }}
+      {% elif partition_creation is defined and partition_creation.skipped is defined %}
+      Partition creation: SKIPPED ({{ partition_creation.skip_reason | default('condition not met') }})
       {% else %}
-      Using whole disk: {{ target_device }}
+      Partition creation: NOT EXECUTED
+      {% endif %}
+      
+      {% if created_partition is defined and created_partition.stdout is defined %}
+      Detected partition: {{ created_partition.stdout }}
+      {% else %}
+      Partition detection: FAILED - using whole disk fallback
+      {% endif %}
+      {% else %}
+      Strategy: Using whole disk (no partition creation)
       {% endif %}
