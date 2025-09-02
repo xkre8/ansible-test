@@ -64,7 +64,8 @@
       - base_disk defined and not empty: {{ base_disk is defined and base_disk != "" }}
       Will run partition.yml: {{ (partition_strategy == 'create_partition') and (vg_strategy in ['create_new', 'extend_existing']) and (base_disk is defined and base_disk != "") }}
 
-# Handle partition creation or set whole disk
+# === DEVICE PREPARATION ===
+# Handle partition creation (ครั้งเดียว)
 - name: Handle partition creation
   ansible.builtin.include_tasks: partition.yml
   when: 
@@ -72,113 +73,29 @@
     - vg_strategy in ['create_new', 'extend_existing']
     - base_disk is defined and base_disk != ""
 
-# Handle partition creation or set whole disk
-- name: Handle partition creation
-  ansible.builtin.include_tasks: partition.yml
+# Set target device for strategies ที่ไม่ผ่าน partition.yml
+- name: Set target device for non-partition strategies
+  ansible.builtin.set_fact:
+    target_device: >-
+      {%- if pv_strategy == 'use_existing_pv' -%}
+        {{ existing_pv_device }}
+      {%- elif partition_strategy == 'use_whole_disk' -%}
+        {{ base_disk }}
+      {%- else -%}
+        {{ base_disk }}
+      {%- endif -%}
   when: 
-    - partition_strategy == 'create_partition'
-    - vg_strategy in ['create_new', 'extend_existing']
-    - base_disk is defined and base_disk != ""
+    - partition_strategy != 'create_partition'
+    - target_device is not defined
 
-# เพิ่ม debug หลัง include partition.yml
-- name: Debug target device after partition.yml
+- name: Debug target device after setup
   ansible.builtin.debug:
     msg: |
-      After partition.yml:
+      After device setup:
       - partition_strategy: {{ partition_strategy }}
       - base_disk: {{ base_disk | default('undefined') }}
       - target_device: {{ target_device | default('undefined') }}
-      - partition.yml was run: {{ (partition_strategy == 'create_partition') and (vg_strategy in ['create_new', 'extend_existing']) and (base_disk is defined and base_disk != "") }}
-
-# Set target device for whole disk strategy
-- name: Set target device for whole disk strategy
-  ansible.builtin.set_fact:
-    target_device: "{{ base_disk }}"
-  when: 
-    - partition_strategy == 'use_whole_disk'
-    - base_disk is defined
-    - base_disk != ""
-
-# Set target device for existing PV
-- name: Set target device for existing PV
-  ansible.builtin.set_fact:
-    target_device: "{{ existing_pv_device }}"
-  when: 
-    - pv_strategy == 'use_existing_pv'
-    - existing_pv_device != ""
-
-# เพิ่ม fallback ถ้า target_device ยังไม่ถูก set
-- name: Set fallback target device
-  ansible.builtin.set_fact:
-    target_device: "{{ base_disk }}"
-  when: 
-    - target_device is not defined or target_device == ""
-    - base_disk is defined and base_disk != ""
-
-- name: Debug final target device
-  ansible.builtin.debug:
-    msg: |
-      Final Configuration:
-      - Strategy: {{ partition_strategy }}
-      - Base disk: {{ base_disk }}
-      - Target device: {{ target_device }}
-      {% if partition_strategy == 'create_partition' %}
-      - Partition size: {{ partition_size_gb }}GB
-      {% endif %}
-      
-      Device validation:
-      - target_device defined: {{ target_device is defined }}
-      - target_device not empty: {{ target_device != "" if target_device is defined else false }}
-      
-# ❌ ลบส่วนนี้ออก - เพราะทับซ้อนกับ partition.yml
-# - name: Set final target device
-#   ansible.builtin.set_fact:
-#     target_device: "{{ target_device | default(base_disk) }}"
-
-# ❌ ลบส่วนนี้ออก - เพราะทับซ้อนกับ partition.yml  
-# - name: Set target device
-#   ansible.builtin.set_fact:
-#     target_device: >-
-#       {%- if pv_strategy == 'use_existing_pv' -%}
-#         {{ existing_pv_device }}
-#       {%- elif manual_lvm_device != '' -%}
-#         {{ manual_lvm_device }}
-#       {%- elif selected_disk_name != '' -%}
-#         {{ '/dev/' + selected_disk_name }}
-#       {%- endif -%}
-
-# ✅ เพิ่มส่วนนี้ - set target_device ถ้า use_whole_disk
-- name: Set target device for whole disk strategy
-  ansible.builtin.set_fact:
-    target_device: "{{ base_disk }}"
-  when: 
-    - partition_strategy == 'use_whole_disk'
-
-- name: Set target device for existing PV
-  ansible.builtin.set_fact:
-    target_device: "{{ existing_pv_device }}"
-  when: 
-    - pv_strategy == 'use_existing_pv'
-    - existing_pv_device != ""
-
-# เพิ่ม fallback ถ้า target_device ยังไม่ถูก set
-- name: Set fallback target device
-  ansible.builtin.set_fact:
-    target_device: "{{ base_disk }}"
-  when: 
-    - target_device is not defined or target_device == ""
-    - base_disk is defined and base_disk != ""
-
-- name: Debug final target device
-  ansible.builtin.debug:
-    msg: |
-      Final Configuration:
-      - Strategy: {{ partition_strategy }}
-      - Base disk: {{ base_disk }}
-      - Target device: {{ target_device }}
-      {% if partition_strategy == 'create_partition' %}
-      - Partition size: {{ partition_size_gb }}GB
-      {% endif %}
+      - Will create PV on: {{ target_device }}
 
 # === PHYSICAL VOLUME ===
 - name: Create Physical Volume (if needed)
