@@ -50,6 +50,18 @@
   loop:
     - volume_group_name
 
+- name: Validate partition strategy
+  ansible.builtin.fail:
+    msg: "partition_strategy must be 'use_whole_disk' or 'create_partition'"
+  when: partition_strategy not in ['use_whole_disk', 'create_partition']
+
+- name: Validate partition size
+  ansible.builtin.fail:
+    msg: "partition_size_gb must be between 1 and 1000 GB"
+  when: 
+    - partition_strategy == 'create_partition'
+    - (partition_size_gb | int) < 1 or (partition_size_gb | int) > 1000
+
 - name: Check device is specified when needed
   ansible.builtin.fail:
     msg: "Device required! Specify: selected_disk_name, manual_lvm_device, or existing_pv_device"
@@ -59,13 +71,13 @@
     - manual_lvm_device == ""
     - (existing_pv_device == "" or pv_strategy != 'use_existing_pv')
 
-- name: Validate device exists
+- name: Validate base disk exists
   ansible.builtin.stat:
-    path: "{{ target_device }}"
+    path: "{{ base_disk }}"
   register: device_check
   failed_when: not device_check.stat.exists
   when: 
-    - target_device is defined and target_device != ""
+    - base_disk is defined and base_disk != ""
     - vg_strategy in ['create_new', 'extend_existing']
 
 - name: Check VG exists for use_existing strategy

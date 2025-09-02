@@ -85,6 +85,7 @@
       - lvm2           # for LVM management
       - xfsprogs       # for XFS filesystem
       - e2fsprogs      # for ext2/ext3/ext4 filesystem
+      - parted 
     state: present
 
 - name: Parse filesystem configuration
@@ -123,6 +124,43 @@
 
 - name: Validate configuration
   ansible.builtin.include_tasks: validate.yml
+
+# NEW: Set base disk for partition operations
+- name: Set base disk device
+  ansible.builtin.set_fact:
+    base_disk: >-
+      {%- if pv_strategy == 'use_existing_pv' -%}
+        {{ existing_pv_device }}
+      {%- elif manual_lvm_device != '' -%}
+        {{ manual_lvm_device }}
+      {%- elif selected_disk_name != '' -%}
+        {{ '/dev/' + selected_disk_name }}
+      {%- endif -%}
+
+- name: "Debug partition strategy"
+  ansible.builtin.debug:
+    msg: |
+      Partition Strategy: {{ partition_strategy }}
+      Base Disk: {{ base_disk }}
+      Partition Size: {{ partition_size_gb }}GB
+      Conditions:
+      - vg_strategy in ['create_new', 'extend_existing']: {{ vg_strategy in ['create_new', 'extend_existing'] }}
+      - base_disk defined: {{ base_disk is defined }}
+      - base_disk not empty: {{ base_disk != "" }}
+      Will run partition.yml: {{ (vg_strategy in ['create_new', 'extend_existing']) and (base_disk is defined and base_disk != "") }}
+      
+# NEW: Handle partition creation
+- name: Handle partition creation
+  ansible.builtin.include_tasks: partition.yml
+  when: 
+    - partition_strategy == 'create_partition'
+    - vg_strategy in ['create_new', 'extend_existing']
+    - base_disk is defined and base_disk != ""
+
+# UPDATED: Use target_device from partition.yml or fallback to base_disk
+- name: Set final target device
+  ansible.builtin.set_fact:
+    target_device: "{{ target_device | default(base_disk) }}"
 
 - name: Set target device
   ansible.builtin.set_fact:
