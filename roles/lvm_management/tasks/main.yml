@@ -95,7 +95,6 @@
     target_device: "{{ base_disk }}"
   when: 
     - partition_strategy == 'use_whole_disk'
-    - target_device is not defined
 
 - name: Set target device for existing PV
   ansible.builtin.set_fact:
@@ -103,6 +102,14 @@
   when: 
     - pv_strategy == 'use_existing_pv'
     - existing_pv_device != ""
+
+# เพิ่ม fallback ถ้า target_device ยังไม่ถูก set
+- name: Set fallback target device
+  ansible.builtin.set_fact:
+    target_device: "{{ base_disk }}"
+  when: 
+    - target_device is not defined or target_device == ""
+    - base_disk is defined and base_disk != ""
 
 - name: Debug final target device
   ansible.builtin.debug:
@@ -135,6 +142,39 @@
   when: 
     - vg_strategy in ['create_new', 'extend_existing']
     - target_device is defined and target_device != ""
+
+- name: Debug PV/VG creation results
+  ansible.builtin.shell: |
+    echo "=== PHYSICAL VOLUMES ==="
+    pvs 2>/dev/null || echo "No PVs found"
+    echo ""
+    echo "=== VOLUME GROUPS ==="
+    vgs 2>/dev/null || echo "No VGs found"
+    echo ""
+    echo "=== LSBLK OUTPUT ==="
+    lsblk {{ base_disk }} 2>/dev/null || echo "Base disk not found: {{ base_disk }}"
+    echo ""
+    echo "=== TARGET DEVICE CHECK ==="
+    if [ -b "{{ target_device }}" ]; then
+      echo "Target device {{ target_device }} exists"
+      ls -la "{{ target_device }}"
+    else
+      echo "Target device {{ target_device }} NOT FOUND!"
+    fi
+  register: debug_info
+  changed_when: false
+
+- name: Display debug information
+  ansible.builtin.debug:
+    msg: |
+      {{ debug_info.stdout }}
+      
+      Variables:
+      - partition_strategy: {{ partition_strategy }}
+      - base_disk: {{ base_disk }}
+      - target_device: {{ target_device | default('undefined') }}
+      - vg_strategy: {{ vg_strategy }}
+      - pv_strategy: {{ pv_strategy }}
 
 # === SIZE VALIDATION ===
 - name: Get Volume Group size and validate

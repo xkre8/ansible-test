@@ -2,7 +2,11 @@
 # === PARTITION MANAGEMENT ===
 - name: Get disk information
   ansible.builtin.shell: |
-    fdisk -l "{{ base_disk }}" 2>/dev/null | grep "Disk {{ base_disk }}:" || echo "Disk not found"
+    echo "=== DISK INFO FOR {{ base_disk }} ==="
+    fdisk -l "{{ base_disk }}" 2>/dev/null | head -5 || echo "Disk not found"
+    echo ""
+    echo "=== CURRENT PARTITIONS ==="
+    lsblk "{{ base_disk }}" 2>/dev/null || echo "No partitions"
   register: disk_info
   changed_when: false
   when: 
@@ -12,7 +16,6 @@
 - name: Display disk information
   ansible.builtin.debug:
     msg: |
-      Disk Information:
       {{ disk_info.stdout }}
       Will create {{ partition_size_gb }}GB partition on {{ base_disk }}
   when: 
@@ -26,38 +29,52 @@
   changed_when: false
   when: partition_strategy == 'create_partition'
 
-- name: "Create partition using parted"
+- name: Create partition using parted
   ansible.builtin.shell: |
-    echo "DEBUG: partition_strategy = {{ partition_strategy }}"
-    echo "DEBUG: base_disk = {{ base_disk }}"
-    echo "DEBUG: partition_size_gb = {{ partition_size_gb }}"
+    echo "DEBUG: Creating partition on {{ base_disk }}"
+    echo "DEBUG: Partition size: {{ partition_size_gb }}GB"
     
     # Check if partition table exists
     if ! parted "{{ base_disk }}" print >/dev/null 2>&1; then
       echo "Creating GPT partition table on {{ base_disk }}..."
       parted "{{ base_disk }}" mklabel gpt
+    else
+      echo "Partition table already exists on {{ base_disk }}"
     fi
     
     # Create partition
     echo "Creating {{ partition_size_gb }}GB partition on {{ base_disk }}..."
     parted "{{ base_disk }}" mkpart primary 0% {{ partition_size_gb }}GB
     
-    # Wait for kernel to recognize
+    # Wait and refresh
     sleep 3
-    partprobe "{{ base_disk }}"
+    partprobe "{{ base_disk }}" 2>/dev/null || true
+    
+    # Verify partition was created
+    echo "=== VERIFICATION ==="
+    lsblk "{{ base_disk }}"
     
     # Get the new partition name
     new_partition=$(lsblk "{{ base_disk }}" -o NAME -n | grep -v "$(basename {{ base_disk }})" | head -1 | tr -d '├─└│ ')
-    echo "Created partition: /dev/${new_partition}"
+    if [ -n "$new_partition" ]; then
+      echo "SUCCESS: Created partition /dev/${new_partition}"
+    else
+      echo "ERROR: Failed to create partition!"
+      exit 1
+    fi
   register: partition_creation
   when: 
     - partition_strategy == 'create_partition'
-    - base_disk is defined
-    - base_disk != ""
+    - existing_partition_check.stdout == 'no_partition'
 
 - name: Get created partition device
   ansible.builtin.shell: |
-    lsblk "{{ base_disk }}" -o NAME -n | grep -v "$(basename {{ base_disk }})" | head -1 | tr -d '├─└│ ' | sed 's/^/\/dev\//'
+    new_partition=$(lsblk "{{ base_disk }}" -o NAME -n | grep -v "$(basename {{ base_disk }})" | head -1 | tr -d '├─└│ ')
+    if [ -n "$new_partition" ]; then
+      echo "/dev/${new_partition}"
+    else
+      echo "{{ base_disk }}"  # fallback to whole disk
+    fi
   register: created_partition
   changed_when: false
   when: 
@@ -73,8 +90,11 @@
     msg: |
       Partition Strategy: {{ partition_strategy }}
       {% if partition_strategy == 'create_partition' %}
+      Base disk: {{ base_disk }}
       Created partition: {{ target_device }}
       Partition size: {{ partition_size_gb }}GB
+      Partition creation output:
+      {{ partition_creation.stdout if partition_creation is defined else 'No creation output' }}
       {% else %}
       Using whole disk: {{ target_device }}
       {% endif %}
