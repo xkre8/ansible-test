@@ -1,18 +1,14 @@
 ---
-- name: Install LVM and filesystem packages
+- name: Install LVM packages
   ansible.builtin.package:
-    name:
-      - lvm2
-      - xfsprogs
-      - e2fsprogs
-      - parted
+    name: [lvm2, xfsprogs, e2fsprogs, parted]
     state: present
 
 - name: Parse filesystem configuration
   ansible.builtin.set_fact:
     filesystem_dirs: "{{ (filesystem_config | from_yaml) if filesystem_config is defined else [] }}"
 
-- name: Generate LV names for empty lv_name fields
+- name: Generate LV names
   ansible.builtin.set_fact:
     filesystem_dirs: "{{ processed_filesystems }}"
   vars:
@@ -20,266 +16,89 @@
       {%- set result = [] -%}
       {%- for item in filesystem_dirs -%}
         {%- if item.lv_name is defined and item.lv_name != '' -%}
-          {%- set clean_lv_name = item.lv_name | regex_replace('[^a-zA-Z0-9_-]', '_') -%}
-          {%- set final_lv_name = clean_lv_name -%}
+          {%- set final_lv_name = item.lv_name | regex_replace('[^a-zA-Z0-9_-]', '_') -%}
         {%- else -%}
-          {%- set auto_lv_name = volume_group_name + '_' + (item.path | regex_replace('^/', '') | regex_replace('[^a-zA-Z0-9_-]', '_')) -%}
-          {%- set final_lv_name = auto_lv_name -%}
+          {%- set final_lv_name = volume_group_name + '_' + (item.path | regex_replace('^/', '') | regex_replace('[^a-zA-Z0-9_-]', '_')) -%}
         {%- endif -%}
-        {%- set processed_item = item | combine({'lv_name': final_lv_name}) -%}
-        {%- set _ = result.append(processed_item) -%}
+        {%- set _ = result.append(item | combine({'lv_name': final_lv_name})) -%}
       {%- endfor -%}
       {{ result }}
   when: filesystem_dirs | length > 0
 
-- name: Calculate total requested LV size
+- name: Calculate total size
   ansible.builtin.set_fact:
     total_requested_mb: "{{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum }}"
   when: filesystem_dirs | length > 0
 
-- name: Validate configuration
-  ansible.builtin.include_tasks: validate.yml
-
-# === STEP 1: DETERMINE TARGET DEVICE ===
-- name: Set target device based on strategy
+# === DEVICE SETUP ===
+- name: Set target device
   ansible.builtin.set_fact:
     target_device: >-
       {%- if pv_strategy == 'use_existing_pv' -%}
-        {%- if existing_pv_device != '' -%}
-          {{ existing_pv_device }}
-        {%- else -%}
-          {{ '/dev/' + selected_disk_name }}
-        {%- endif -%}
+        {{ existing_pv_device if existing_pv_device != '' else '/dev/' + selected_disk_name }}
       {%- elif partition_strategy == 'create_partition' -%}
         {{ '/dev/' + selected_disk_name + '1' }}
       {%- else -%}
         {{ '/dev/' + selected_disk_name }}
       {%- endif -%}
 
-- name: Debug target device selection
-  ansible.builtin.debug:
-    msg: |
-      Target Device Selection:
-      - pv_strategy: {{ pv_strategy }}
-      - partition_strategy: {{ partition_strategy }}
-      - selected_disk_name: {{ selected_disk_name }}
-      - existing_pv_device: {{ existing_pv_device | default('') }}
-      - target_device: {{ target_device }}
-
-# === STEP 2: CREATE PARTITION (if needed) ===
-- name: Create partition if strategy is create_partition
+# === CREATE PARTITION ===
+- name: Create partition
   ansible.builtin.shell: |
-    echo "Creating {{ partition_size_gb }}GB partition on /dev/{{ selected_disk_name }}"
-    
-    # Clear and create partition table
     wipefs -a "/dev/{{ selected_disk_name }}" 2>/dev/null || true
     parted "/dev/{{ selected_disk_name }}" --script mklabel gpt
     parted "/dev/{{ selected_disk_name }}" --script mkpart primary 0% {{ partition_size_gb }}GB
-    
-    # Wait and refresh
-    sleep 3
-    partprobe "/dev/{{ selected_disk_name }}"
-    
-    # Verify partition exists
-    if [ ! -b "/dev/{{ selected_disk_name }}1" ]; then
-      echo "ERROR: Partition /dev/{{ selected_disk_name }}1 not created"
-      exit 1
-    fi
-    
-    echo "SUCCESS: Partition /dev/{{ selected_disk_name }}1 created"
-  register: partition_result
+    sleep 2 && partprobe "/dev/{{ selected_disk_name }}"
   when: 
     - partition_strategy == 'create_partition'
     - pv_strategy == 'create_new_pv'
-    - selected_disk_name != ''
 
-- name: Display partition result
-  ansible.builtin.debug:
-    msg: "{{ partition_result.stdout }}"
-  when: partition_result is defined
-
-# === STEP 3: CHECK IF DEVICE EXISTS ===
-- name: Check if target device exists
-  ansible.builtin.stat:
-    path: "{{ target_device }}"
-  register: device_check
-
-- name: Fail if target device doesn't exist
-  ansible.builtin.fail:
-    msg: "Target device {{ target_device }} does not exist!"
-  when: not device_check.stat.exists
-
-# === STEP 4: CHECK IF PV ALREADY EXISTS ===
-- name: Check if PV already exists
-  ansible.builtin.shell: |
-    pvs "{{ target_device }}" 2>/dev/null && echo "exists" || echo "not_exists"
-  register: pv_check
-  changed_when: false
-
-- name: Debug PV check result
-  ansible.builtin.debug:
-    msg: |
-      PV Check Result:
-      - Device: {{ target_device }}
-      - Status: {{ pv_check.stdout }}
-      - Will create PV: {{ (pv_strategy == 'create_new_pv') and (pv_check.stdout == 'not_exists') }}
-
-# === STEP 5: CREATE PHYSICAL VOLUME ===
-- name: Create Physical Volume (if needed)
-  ansible.builtin.shell: |
-    echo "Creating PV on {{ target_device }}"
-    pvcreate "{{ target_device }}"
-    echo "PV created successfully"
+# === CREATE PV ===
+- name: Create PV
+  ansible.builtin.shell: pvcreate "{{ target_device }}"
   register: pv_result
+  failed_when: pv_result.rc != 0 and 'already' not in pv_result.stderr
   when: 
     - pv_strategy == 'create_new_pv'
-    - pv_check.stdout == 'not_exists'
 
-- name: Display PV creation result
-  ansible.builtin.debug:
-    msg: "{{ pv_result.stdout }}"
-  when: pv_result is defined
-
-# === STEP 6: CREATE/EXTEND VOLUME GROUP ===
-- name: Check if VG exists
+# === CREATE VG ===
+- name: Create/Extend VG
   ansible.builtin.shell: |
-    vgs "{{ volume_group_name }}" 2>/dev/null && echo "exists" || echo "not_exists"
-  register: vg_check
-  changed_when: false
-
-- name: Create Volume Group
-  ansible.builtin.shell: |
-    echo "Creating VG {{ volume_group_name }} with PV {{ target_device }}"
-    vgcreate "{{ volume_group_name }}" "{{ target_device }}"
-    echo "VG created successfully"
-  register: vg_create_result
-  when: 
-    - vg_strategy == 'create_new'
-    - vg_check.stdout == 'not_exists'
-
-- name: Extend Volume Group
-  ansible.builtin.shell: |
-    echo "Extending VG {{ volume_group_name }} with PV {{ target_device }}"
-    vgextend "{{ volume_group_name }}" "{{ target_device }}"
-    echo "VG extended successfully"
-  register: vg_extend_result
-  when: 
-    - vg_strategy == 'extend_existing'
-    - vg_check.stdout == 'exists'
-
-- name: Display VG operation result
-  ansible.builtin.debug:
-    msg: |
-      {% if vg_create_result is defined %}
-      {{ vg_create_result.stdout }}
-      {% elif vg_extend_result is defined %}
-      {{ vg_extend_result.stdout }}
-      {% else %}
-      Using existing VG {{ volume_group_name }}
-      {% endif %}
-
-# === STEP 7: VALIDATE SIZE BEFORE CREATING LVs ===
-- name: Get Volume Group size and validate
-  ansible.builtin.shell: |
-    vg_info=$(vgs --noheadings --units m "{{ volume_group_name }}" -o vg_free 2>/dev/null || echo "0")
-    vg_free_mb=$(echo "$vg_info" | sed 's/[^0-9.]//g' | cut -d. -f1)
-    total_requested={{ total_requested_mb | default(0) }}
-    
-    echo "VG Free: ${vg_free_mb}MB"
-    echo "Requested: ${total_requested}MB"
-    
-    if [ "$total_requested" -gt "$vg_free_mb" ]; then
-      echo "FAIL: Requested ${total_requested}MB exceeds available ${vg_free_mb}MB"
-      exit 1
+    if vgs "{{ volume_group_name }}" 2>/dev/null; then
+      vgextend "{{ volume_group_name }}" "{{ target_device }}"
     else
-      echo "PASS: ${vg_free_mb}MB available, ${total_requested}MB requested"
+      vgcreate "{{ volume_group_name }}" "{{ target_device }}"
     fi
-  register: size_check
-  failed_when: size_check.rc != 0
-  changed_when: false
+  when: vg_strategy in ['create_new', 'extend_existing']
+
+# === SIZE VALIDATION ===
+- name: Validate VG size
+  ansible.builtin.shell: |
+    vg_free=$(vgs --noheadings --units m "{{ volume_group_name }}" -o vg_free | sed 's/[^0-9.]//g' | cut -d. -f1)
+    [ "{{ total_requested_mb | default(0) }}" -le "$vg_free" ] || exit 1
   when: filesystem_dirs | length > 0
 
-- name: Display size validation result
-  ansible.builtin.debug:
-    msg: "{{ size_check.stdout }}"
-  when: size_check is defined
-
-# === STEP 8: CREATE LOGICAL VOLUMES ===
-- name: Create Logical Volumes
+# === CREATE LV & FILESYSTEM ===
+- name: Create LV and filesystem
   ansible.builtin.shell: |
-    echo "Creating LV {{ item.lv_name }} ({{ item.size_mb }}MB) in VG {{ volume_group_name }}"
     lvcreate -L "{{ item.size_mb }}M" -n "{{ item.lv_name }}" "{{ volume_group_name }}"
-    echo "LV {{ item.lv_name }} created successfully"
-  loop: "{{ filesystem_dirs }}"
-  when: filesystem_dirs | length > 0
-
-# === STEP 9: CREATE FILESYSTEMS ===
-- name: Create filesystems
-  ansible.builtin.shell: |
-    echo "Creating {{ item.fstype }} filesystem on /dev/{{ volume_group_name }}/{{ item.lv_name }}"
     mkfs.{{ item.fstype }} "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
-    echo "Filesystem created successfully"
   loop: "{{ filesystem_dirs }}"
   when: filesystem_dirs | length > 0
 
-# === STEP 10: CREATE MOUNT POINTS AND MOUNT ===
-- name: Create mount directories
+# === MOUNT ===
+- name: Create mount point and mount
   ansible.builtin.file:
     path: "{{ item.path }}"
     state: directory
-    owner: "{{ item.owner | default('root') }}"
-    group: "{{ item.group | default('root') }}"
-    mode: "{{ item.mode | default('0755') }}"
   loop: "{{ filesystem_dirs }}"
   when: filesystem_dirs | length > 0
 
-- name: Mount filesystems
+- name: Mount filesystem
   ansible.posix.mount:
     path: "{{ item.path }}"
     src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
-    fstype: "{{ item.fstype | default('xfs') }}"
-    opts: "{{ item.mount_opts | default('defaults') }}"
-    dump: >-
-      {%- if (item.fstype | default('xfs')) == 'xfs' -%}
-      0
-      {%- elif (item.fstype | default('xfs')) in ['ext4', 'ext3', 'ext2'] -%}
-      1
-      {%- else -%}
-      0
-      {%- endif -%}
-    passno: >-
-      {%- if (item.fstype | default('xfs')) == 'xfs' -%}
-      0
-      {%- elif (item.fstype | default('xfs')) in ['ext4', 'ext3', 'ext2'] -%}
-      2
-      {%- else -%}
-      0
-      {%- endif -%}
+    fstype: "{{ item.fstype }}"
     state: mounted
   loop: "{{ filesystem_dirs }}"
   when: filesystem_dirs | length > 0
-
-# === STEP 11: DISPLAY SUMMARY ===
-- name: Display final summary
-  ansible.builtin.shell: |
-    echo "=== LVM SETUP SUMMARY ==="
-    echo "Strategy: {{ partition_strategy }} / {{ pv_strategy }}"
-    echo "Target Device: {{ target_device }}"
-    echo ""
-    echo "=== PHYSICAL VOLUMES ==="
-    pvs
-    echo ""
-    echo "=== VOLUME GROUPS ==="
-    vgs
-    echo ""
-    echo "=== LOGICAL VOLUMES ==="
-    lvs
-    echo ""
-    echo "=== BLOCK DEVICES ==="
-    lsblk
-  register: final_summary
-  changed_when: false
-
-- name: Show summary
-  ansible.builtin.debug:
-    msg: "{{ final_summary.stdout }}"
