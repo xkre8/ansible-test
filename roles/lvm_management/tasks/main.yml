@@ -97,8 +97,25 @@
 - name: Mount filesystem
   ansible.posix.mount:
     path: "{{ item.path }}"
-    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    src: "/dev/mapper/{{ volume_group_name }}-{{ item.lv_name }}"
     fstype: "{{ item.fstype }}"
+    opts: "defaults"
+    dump: >-
+      {%- if item.fstype == 'xfs' -%}
+      0
+      {%- elif item.fstype in ['ext4', 'ext3', 'ext2'] -%}
+      1
+      {%- else -%}
+      0
+      {%- endif -%}
+    passno: >-
+      {%- if item.fstype == 'xfs' -%}
+      0
+      {%- elif item.fstype in ['ext4', 'ext3', 'ext2'] -%}
+      2
+      {%- else -%}
+      0
+      {%- endif -%}
     state: mounted
   loop: "{{ filesystem_dirs }}"
   when: filesystem_dirs | length > 0
