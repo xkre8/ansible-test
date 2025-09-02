@@ -40,181 +40,159 @@
 - name: Validate configuration
   ansible.builtin.include_tasks: validate.yml
 
-# Set base disk for partition operations
-- name: Set base disk device
-  ansible.builtin.set_fact:
-    base_disk: >-
-      {%- if pv_strategy == 'use_existing_pv' -%}
-        {{ existing_pv_device }}
-      {%- elif manual_lvm_device != '' -%}
-        {{ manual_lvm_device }}
-      {%- elif selected_disk_name != '' -%}
-        {{ '/dev/' + selected_disk_name }}
-      {%- endif -%}
-
-- name: "Debug partition strategy"
-  ansible.builtin.debug:
-    msg: |
-      Partition Strategy: {{ partition_strategy }}
-      Base Disk: {{ base_disk }}
-      Partition Size: {{ partition_size_gb }}GB
-      Conditions for partition.yml:
-      - partition_strategy == 'create_partition': {{ partition_strategy == 'create_partition' }}
-      - vg_strategy in ['create_new', 'extend_existing']: {{ vg_strategy in ['create_new', 'extend_existing'] }}
-      - base_disk defined and not empty: {{ base_disk is defined and base_disk != "" }}
-      Will run partition.yml: {{ (partition_strategy == 'create_partition') and (vg_strategy in ['create_new', 'extend_existing']) and (base_disk is defined and base_disk != "") }}
-
-# === DEVICE PREPARATION ===
-# Handle partition creation (ครั้งเดียว)
-- name: Handle partition creation
-  ansible.builtin.include_tasks: partition.yml
-  when: 
-    - partition_strategy == 'create_partition'
-    - vg_strategy in ['create_new', 'extend_existing']
-    - base_disk is defined and base_disk != ""
-
-- name: "Debug after partition.yml"
-  ansible.builtin.debug:
-    msg: |
-      After partition.yml:
-      - target_device: {{ target_device | default('undefined') }}
-      - partition.yml was executed: {{ (partition_strategy == 'create_partition') and (vg_strategy in ['create_new', 'extend_existing']) and (base_disk is defined and base_disk != "") }}
-
-# ✅ เพิ่ม Force Set สำหรับ create_partition
-- name: "Force set target device for create_partition strategy"
-  ansible.builtin.set_fact:
-    target_device: "/dev/{{ selected_disk_name }}1"
-  when: 
-    - partition_strategy == 'create_partition'
-    - selected_disk_name is defined
-    - selected_disk_name != ""
-
-# Set target device for strategies ที่ไม่ผ่าน partition.yml
-- name: Set target device for strategies that don't use partition.yml
+# === STEP 1: DETERMINE TARGET DEVICE ===
+- name: Set target device based on strategy
   ansible.builtin.set_fact:
     target_device: >-
       {%- if pv_strategy == 'use_existing_pv' -%}
-        {{ existing_pv_device }}
-      {%- elif partition_strategy == 'use_whole_disk' -%}
-        {{ base_disk }}
+        {%- if existing_pv_device != '' -%}
+          {{ existing_pv_device }}
+        {%- else -%}
+          {{ '/dev/' + selected_disk_name }}
+        {%- endif -%}
+      {%- elif partition_strategy == 'create_partition' -%}
+        {{ '/dev/' + selected_disk_name + '1' }}
       {%- else -%}
-        {{ base_disk }}
+        {{ '/dev/' + selected_disk_name }}
       {%- endif -%}
-  when: 
-    - partition_strategy != 'create_partition'  # ← เพิ่ม condition นี้
-    - target_device is not defined or target_device == ""
-    - base_disk is defined and base_disk != ""
 
-# ✅ เพิ่ม Task สร้าง partition แบบ force
-- name: "Force create partition if strategy is create_partition"
+- name: Debug target device selection
+  ansible.builtin.debug:
+    msg: |
+      Target Device Selection:
+      - pv_strategy: {{ pv_strategy }}
+      - partition_strategy: {{ partition_strategy }}
+      - selected_disk_name: {{ selected_disk_name }}
+      - existing_pv_device: {{ existing_pv_device | default('') }}
+      - target_device: {{ target_device }}
+
+# === STEP 2: CREATE PARTITION (if needed) ===
+- name: Create partition if strategy is create_partition
   ansible.builtin.shell: |
-    echo "=== FORCE CREATING PARTITION ==="
-    echo "Disk: {{ base_disk }}"
-    echo "Size: {{ partition_size_gb }}GB"
+    echo "Creating {{ partition_size_gb }}GB partition on /dev/{{ selected_disk_name }}"
     
-    # Clear any existing partitions
-    wipefs -a "{{ base_disk }}" 2>/dev/null || true
-    
-    # Create GPT partition table
-    parted "{{ base_disk }}" --script mklabel gpt
-    
-    # Create partition
-    parted "{{ base_disk }}" --script mkpart primary 0% {{ partition_size_gb }}GB
+    # Clear and create partition table
+    wipefs -a "/dev/{{ selected_disk_name }}" 2>/dev/null || true
+    parted "/dev/{{ selected_disk_name }}" --script mklabel gpt
+    parted "/dev/{{ selected_disk_name }}" --script mkpart primary 0% {{ partition_size_gb }}GB
     
     # Wait and refresh
     sleep 3
-    partprobe "{{ base_disk }}"
+    partprobe "/dev/{{ selected_disk_name }}"
     
-    # Verify
-    lsblk "{{ base_disk }}"
-    
-    # Check if partition exists
-    if lsblk "{{ base_disk }}" | grep -q part; then
-      echo "SUCCESS: Partition created"
-    else
-      echo "FAILED: No partition found"
+    # Verify partition exists
+    if [ ! -b "/dev/{{ selected_disk_name }}1" ]; then
+      echo "ERROR: Partition /dev/{{ selected_disk_name }}1 not created"
       exit 1
     fi
-  register: force_partition_result
+    
+    echo "SUCCESS: Partition /dev/{{ selected_disk_name }}1 created"
+  register: partition_result
   when: 
     - partition_strategy == 'create_partition'
-    - base_disk is defined
-    - base_disk != ""
-
-- name: "Display force partition result"
-  ansible.builtin.debug:
-    msg: |
-      Force Partition Creation:
-      {{ force_partition_result.stdout if force_partition_result is defined else 'Not executed' }}
-  when: force_partition_result is defined
-
-# === PHYSICAL VOLUME ===
-- name: Create Physical Volume (if needed)
-  ansible.builtin.command: pvcreate {{ target_device }}
-  register: pv_result
-  failed_when: pv_result.rc != 0 and 'already' not in pv_result.stderr
-  changed_when: pv_result.rc == 0 and 'already' not in pv_result.stderr
-  when: 
     - pv_strategy == 'create_new_pv'
-    - vg_strategy in ['create_new', 'extend_existing']
-    - target_device is defined and target_device != ""
+    - selected_disk_name != ''
 
-# === VOLUME GROUP ===
-- name: Create/Extend Volume Group
-  community.general.lvg:
-    vg: "{{ volume_group_name }}"
-    pvs: "{{ target_device }}"
-    state: present
-  when: 
-    - vg_strategy in ['create_new', 'extend_existing']
-    - target_device is defined and target_device != ""
+- name: Display partition result
+  ansible.builtin.debug:
+    msg: "{{ partition_result.stdout }}"
+  when: partition_result is defined
 
-- name: Debug PV/VG creation results
+# === STEP 3: CHECK IF DEVICE EXISTS ===
+- name: Check if target device exists
+  ansible.builtin.stat:
+    path: "{{ target_device }}"
+  register: device_check
+
+- name: Fail if target device doesn't exist
+  ansible.builtin.fail:
+    msg: "Target device {{ target_device }} does not exist!"
+  when: not device_check.stat.exists
+
+# === STEP 4: CHECK IF PV ALREADY EXISTS ===
+- name: Check if PV already exists
   ansible.builtin.shell: |
-    echo "=== PHYSICAL VOLUMES ==="
-    pvs 2>/dev/null || echo "No PVs found"
-    echo ""
-    echo "=== VOLUME GROUPS ==="
-    vgs 2>/dev/null || echo "No VGs found"
-    echo ""
-    echo "=== LSBLK OUTPUT ==="
-    lsblk {{ base_disk }} 2>/dev/null || echo "Base disk not found: {{ base_disk }}"
-    echo ""
-    echo "=== TARGET DEVICE CHECK ==="
-    if [ -b "{{ target_device }}" ]; then
-      echo "Target device {{ target_device }} exists"
-      ls -la "{{ target_device }}"
-    else
-      echo "Target device {{ target_device }} NOT FOUND!"
-    fi
-  register: debug_info
+    pvs "{{ target_device }}" 2>/dev/null && echo "exists" || echo "not_exists"
+  register: pv_check
   changed_when: false
 
-- name: Display debug information
+- name: Debug PV check result
   ansible.builtin.debug:
     msg: |
-      {{ debug_info.stdout }}
-      
-      Variables:
-      - partition_strategy: {{ partition_strategy }}
-      - base_disk: {{ base_disk }}
-      - target_device: {{ target_device | default('undefined') }}
-      - vg_strategy: {{ vg_strategy }}
-      - pv_strategy: {{ pv_strategy }}
+      PV Check Result:
+      - Device: {{ target_device }}
+      - Status: {{ pv_check.stdout }}
+      - Will create PV: {{ (pv_strategy == 'create_new_pv') and (pv_check.stdout == 'not_exists') }}
 
-# === SIZE VALIDATION ===
+# === STEP 5: CREATE PHYSICAL VOLUME ===
+- name: Create Physical Volume (if needed)
+  ansible.builtin.shell: |
+    echo "Creating PV on {{ target_device }}"
+    pvcreate "{{ target_device }}"
+    echo "PV created successfully"
+  register: pv_result
+  when: 
+    - pv_strategy == 'create_new_pv'
+    - pv_check.stdout == 'not_exists'
+
+- name: Display PV creation result
+  ansible.builtin.debug:
+    msg: "{{ pv_result.stdout }}"
+  when: pv_result is defined
+
+# === STEP 6: CREATE/EXTEND VOLUME GROUP ===
+- name: Check if VG exists
+  ansible.builtin.shell: |
+    vgs "{{ volume_group_name }}" 2>/dev/null && echo "exists" || echo "not_exists"
+  register: vg_check
+  changed_when: false
+
+- name: Create Volume Group
+  ansible.builtin.shell: |
+    echo "Creating VG {{ volume_group_name }} with PV {{ target_device }}"
+    vgcreate "{{ volume_group_name }}" "{{ target_device }}"
+    echo "VG created successfully"
+  register: vg_create_result
+  when: 
+    - vg_strategy == 'create_new'
+    - vg_check.stdout == 'not_exists'
+
+- name: Extend Volume Group
+  ansible.builtin.shell: |
+    echo "Extending VG {{ volume_group_name }} with PV {{ target_device }}"
+    vgextend "{{ volume_group_name }}" "{{ target_device }}"
+    echo "VG extended successfully"
+  register: vg_extend_result
+  when: 
+    - vg_strategy == 'extend_existing'
+    - vg_check.stdout == 'exists'
+
+- name: Display VG operation result
+  ansible.builtin.debug:
+    msg: |
+      {% if vg_create_result is defined %}
+      {{ vg_create_result.stdout }}
+      {% elif vg_extend_result is defined %}
+      {{ vg_extend_result.stdout }}
+      {% else %}
+      Using existing VG {{ volume_group_name }}
+      {% endif %}
+
+# === STEP 7: VALIDATE SIZE BEFORE CREATING LVs ===
 - name: Get Volume Group size and validate
   ansible.builtin.shell: |
     vg_info=$(vgs --noheadings --units m "{{ volume_group_name }}" -o vg_free 2>/dev/null || echo "0")
     vg_free_mb=$(echo "$vg_info" | sed 's/[^0-9.]//g' | cut -d. -f1)
     total_requested={{ total_requested_mb | default(0) }}
     
+    echo "VG Free: ${vg_free_mb}MB"
+    echo "Requested: ${total_requested}MB"
+    
     if [ "$total_requested" -gt "$vg_free_mb" ]; then
       echo "FAIL: Requested ${total_requested}MB exceeds available ${vg_free_mb}MB"
       exit 1
     else
       echo "PASS: ${vg_free_mb}MB available, ${total_requested}MB requested"
-      exit 0
     fi
   register: size_check
   failed_when: size_check.rc != 0
@@ -226,25 +204,25 @@
     msg: "{{ size_check.stdout }}"
   when: size_check is defined
 
-# === LOGICAL VOLUMES ===
+# === STEP 8: CREATE LOGICAL VOLUMES ===
 - name: Create Logical Volumes
-  community.general.lvol:
-    vg: "{{ volume_group_name }}"
-    lv: "{{ item.lv_name }}"
-    size: "{{ item.size_mb }}m"
-    state: present
+  ansible.builtin.shell: |
+    echo "Creating LV {{ item.lv_name }} ({{ item.size_mb }}MB) in VG {{ volume_group_name }}"
+    lvcreate -L "{{ item.size_mb }}M" -n "{{ item.lv_name }}" "{{ volume_group_name }}"
+    echo "LV {{ item.lv_name }} created successfully"
   loop: "{{ filesystem_dirs }}"
   when: filesystem_dirs | length > 0
 
-# === FILESYSTEMS ===
+# === STEP 9: CREATE FILESYSTEMS ===
 - name: Create filesystems
-  community.general.filesystem:
-    fstype: "{{ item.fstype | default('xfs') }}"
-    dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
-    force: no
+  ansible.builtin.shell: |
+    echo "Creating {{ item.fstype }} filesystem on /dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    mkfs.{{ item.fstype }} "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    echo "Filesystem created successfully"
   loop: "{{ filesystem_dirs }}"
   when: filesystem_dirs | length > 0
 
+# === STEP 10: CREATE MOUNT POINTS AND MOUNT ===
 - name: Create mount directories
   ansible.builtin.file:
     path: "{{ item.path }}"
@@ -255,10 +233,10 @@
   loop: "{{ filesystem_dirs }}"
   when: filesystem_dirs | length > 0
 
-- name: Mount filesystems with correct dump/pass values
+- name: Mount filesystems
   ansible.posix.mount:
     path: "{{ item.path }}"
-    src: "/dev/mapper/{{ volume_group_name | regex_replace('-', '--') }}-{{ item.lv_name }}"
+    src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
     fstype: "{{ item.fstype | default('xfs') }}"
     opts: "{{ item.mount_opts | default('defaults') }}"
     dump: >-
@@ -281,5 +259,27 @@
   loop: "{{ filesystem_dirs }}"
   when: filesystem_dirs | length > 0
 
-- name: Display summary
-  ansible.builtin.include_tasks: summary.yml
+# === STEP 11: DISPLAY SUMMARY ===
+- name: Display final summary
+  ansible.builtin.shell: |
+    echo "=== LVM SETUP SUMMARY ==="
+    echo "Strategy: {{ partition_strategy }} / {{ pv_strategy }}"
+    echo "Target Device: {{ target_device }}"
+    echo ""
+    echo "=== PHYSICAL VOLUMES ==="
+    pvs
+    echo ""
+    echo "=== VOLUME GROUPS ==="
+    vgs
+    echo ""
+    echo "=== LOGICAL VOLUMES ==="
+    lvs
+    echo ""
+    echo "=== BLOCK DEVICES ==="
+    lsblk
+  register: final_summary
+  changed_when: false
+
+- name: Show summary
+  ansible.builtin.debug:
+    msg: "{{ final_summary.stdout }}"
