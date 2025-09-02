@@ -1,91 +1,11 @@
-# ---
-# - name: Install LVM packages
-#   ansible.builtin.package:
-#     name: lvm2
-#     state: present
-
-# - name: Parse filesystem configuration
-#   ansible.builtin.set_fact:
-#     filesystem_dirs: "{{ (filesystem_config | from_yaml) if filesystem_config is defined else [] }}"
-
-# - name: Validate configuration
-#   ansible.builtin.include_tasks: validate.yml
-
-# - name: Set target device
-#   ansible.builtin.set_fact:
-#     target_device: >-
-#       {%- if pv_strategy == 'use_existing_pv' -%}
-#         {{ existing_pv_device }}
-#       {%- elif manual_lvm_device != '' -%}
-#         {{ manual_lvm_device }}
-#       {%- elif selected_disk_name != '' -%}
-#         {{ '/dev/' + selected_disk_name }}
-#       {%- endif -%}
-
-# # === PHYSICAL VOLUME ===
-# - name: Create Physical Volume (if needed)
-#   ansible.builtin.command: pvcreate {{ target_device }}
-#   register: pv_result
-#   failed_when: pv_result.rc != 0 and 'already' not in pv_result.stderr
-#   changed_when: pv_result.rc == 0 and 'already' not in pv_result.stderr
-#   when: 
-#     - pv_strategy == 'create_new_pv'
-#     - vg_strategy in ['create_new', 'extend_existing']
-
-# # === VOLUME GROUP ===
-# - name: Create/Extend Volume Group
-#   community.general.lvg:
-#     vg: "{{ volume_group_name }}"
-#     pvs: "{{ target_device }}"
-#     state: present
-#   when: vg_strategy in ['create_new', 'extend_existing']
-
-# # === LOGICAL VOLUMES ===
-# - name: Create Logical Volumes
-#   community.general.lvol:
-#     vg: "{{ volume_group_name }}"
-#     lv: "{{ item.lv_name }}"
-#     size: "{{ item.size_mb }}m"
-#     state: present
-#   loop: "{{ filesystem_dirs }}"
-
-# # === FILESYSTEMS ===
-# - name: Create filesystems
-#   community.general.filesystem:
-#     fstype: "{{ item.fstype | default('xfs') }}"
-#     dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
-#     force: no
-#   loop: "{{ filesystem_dirs }}"
-
-# - name: Create mount directories
-#   ansible.builtin.file:
-#     path: "{{ item.path }}"
-#     state: directory
-#     owner: "{{ item.owner | default('root') }}"
-#     group: "{{ item.group | default('root') }}"
-#     mode: "{{ item.mode | default('0755') }}"
-#   loop: "{{ filesystem_dirs }}"
-
-# - name: Mount filesystems
-#   ansible.posix.mount:
-#     path: "{{ item.path }}"
-#     src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
-#     fstype: "{{ item.fstype | default('xfs') }}"
-#     opts: "{{ item.mount_opts | default('defaults') }}"
-#     state: mounted
-#   loop: "{{ filesystem_dirs }}"
-
-# - name: Display summary
-#   ansible.builtin.include_tasks: summary.yml
-
 ---
 - name: Install LVM and filesystem packages
   ansible.builtin.package:
     name:
-      - lvm2           # for LVM management
-      - xfsprogs       # for XFS filesystem
-      - e2fsprogs      # for ext2/ext3/ext4 filesystem
-      - parted 
+      - lvm2
+      - xfsprogs
+      - e2fsprogs
+      - parted
     state: present
 
 - name: Parse filesystem configuration
@@ -112,11 +32,6 @@
       {{ result }}
   when: filesystem_dirs | length > 0
 
-- name: Debug processed filesystem config
-  ansible.builtin.debug:
-    msg: "Processed filesystems: {{ filesystem_dirs }}"
-  when: filesystem_dirs | length > 0
-  
 - name: Calculate total requested LV size
   ansible.builtin.set_fact:
     total_requested_mb: "{{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum }}"
@@ -125,7 +40,7 @@
 - name: Validate configuration
   ansible.builtin.include_tasks: validate.yml
 
-# NEW: Set base disk for partition operations
+# Set base disk for partition operations
 - name: Set base disk device
   ansible.builtin.set_fact:
     base_disk: >-
@@ -143,13 +58,13 @@
       Partition Strategy: {{ partition_strategy }}
       Base Disk: {{ base_disk }}
       Partition Size: {{ partition_size_gb }}GB
-      Conditions:
+      Conditions for partition.yml:
+      - partition_strategy == 'create_partition': {{ partition_strategy == 'create_partition' }}
       - vg_strategy in ['create_new', 'extend_existing']: {{ vg_strategy in ['create_new', 'extend_existing'] }}
-      - base_disk defined: {{ base_disk is defined }}
-      - base_disk not empty: {{ base_disk != "" }}
-      Will run partition.yml: {{ (vg_strategy in ['create_new', 'extend_existing']) and (base_disk is defined and base_disk != "") }}
-      
-# NEW: Handle partition creation
+      - base_disk defined and not empty: {{ base_disk is defined and base_disk != "" }}
+      Will run partition.yml: {{ (partition_strategy == 'create_partition') and (vg_strategy in ['create_new', 'extend_existing']) and (base_disk is defined and base_disk != "") }}
+
+# Handle partition creation or set whole disk
 - name: Handle partition creation
   ansible.builtin.include_tasks: partition.yml
   when: 
@@ -157,21 +72,48 @@
     - vg_strategy in ['create_new', 'extend_existing']
     - base_disk is defined and base_disk != ""
 
-# UPDATED: Use target_device from partition.yml or fallback to base_disk
-- name: Set final target device
-  ansible.builtin.set_fact:
-    target_device: "{{ target_device | default(base_disk) }}"
+# ❌ ลบส่วนนี้ออก - เพราะทับซ้อนกับ partition.yml
+# - name: Set final target device
+#   ansible.builtin.set_fact:
+#     target_device: "{{ target_device | default(base_disk) }}"
 
-- name: Set target device
+# ❌ ลบส่วนนี้ออก - เพราะทับซ้อนกับ partition.yml  
+# - name: Set target device
+#   ansible.builtin.set_fact:
+#     target_device: >-
+#       {%- if pv_strategy == 'use_existing_pv' -%}
+#         {{ existing_pv_device }}
+#       {%- elif manual_lvm_device != '' -%}
+#         {{ manual_lvm_device }}
+#       {%- elif selected_disk_name != '' -%}
+#         {{ '/dev/' + selected_disk_name }}
+#       {%- endif -%}
+
+# ✅ เพิ่มส่วนนี้ - set target_device ถ้า use_whole_disk
+- name: Set target device for whole disk strategy
   ansible.builtin.set_fact:
-    target_device: >-
-      {%- if pv_strategy == 'use_existing_pv' -%}
-        {{ existing_pv_device }}
-      {%- elif manual_lvm_device != '' -%}
-        {{ manual_lvm_device }}
-      {%- elif selected_disk_name != '' -%}
-        {{ '/dev/' + selected_disk_name }}
-      {%- endif -%}
+    target_device: "{{ base_disk }}"
+  when: 
+    - partition_strategy == 'use_whole_disk'
+    - target_device is not defined
+
+- name: Set target device for existing PV
+  ansible.builtin.set_fact:
+    target_device: "{{ existing_pv_device }}"
+  when: 
+    - pv_strategy == 'use_existing_pv'
+    - existing_pv_device != ""
+
+- name: Debug final target device
+  ansible.builtin.debug:
+    msg: |
+      Final Configuration:
+      - Strategy: {{ partition_strategy }}
+      - Base disk: {{ base_disk }}
+      - Target device: {{ target_device }}
+      {% if partition_strategy == 'create_partition' %}
+      - Partition size: {{ partition_size_gb }}GB
+      {% endif %}
 
 # === PHYSICAL VOLUME ===
 - name: Create Physical Volume (if needed)
@@ -194,7 +136,7 @@
     - vg_strategy in ['create_new', 'extend_existing']
     - target_device is defined and target_device != ""
 
-# === CRITICAL: VG SIZE CHECK AND FAIL IF INSUFFICIENT ===
+# === SIZE VALIDATION ===
 - name: Get Volume Group size and validate
   ansible.builtin.shell: |
     vg_info=$(vgs --noheadings --units m "{{ volume_group_name }}" -o vg_free 2>/dev/null || echo "0")
@@ -218,7 +160,7 @@
     msg: "{{ size_check.stdout }}"
   when: size_check is defined
 
-# === LOGICAL VOLUMES (Only if validation passed) ===
+# === LOGICAL VOLUMES ===
 - name: Create Logical Volumes
   community.general.lvol:
     vg: "{{ volume_group_name }}"
@@ -247,11 +189,9 @@
   loop: "{{ filesystem_dirs }}"
   when: filesystem_dirs | length > 0
 
-# === MOUNT WITH PROPER DUMP/PASS VALUES ===
 - name: Mount filesystems with correct dump/pass values
   ansible.posix.mount:
     path: "{{ item.path }}"
-    # src: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
     src: "/dev/mapper/{{ volume_group_name | regex_replace('-', '--') }}-{{ item.lv_name }}"
     fstype: "{{ item.fstype | default('xfs') }}"
     opts: "{{ item.mount_opts | default('defaults') }}"
@@ -277,4 +217,3 @@
 
 - name: Display summary
   ansible.builtin.include_tasks: summary.yml
-
