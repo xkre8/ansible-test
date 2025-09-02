@@ -73,8 +73,24 @@
     - vg_strategy in ['create_new', 'extend_existing']
     - base_disk is defined and base_disk != ""
 
+- name: "Debug after partition.yml"
+  ansible.builtin.debug:
+    msg: |
+      After partition.yml:
+      - target_device: {{ target_device | default('undefined') }}
+      - partition.yml was executed: {{ (partition_strategy == 'create_partition') and (vg_strategy in ['create_new', 'extend_existing']) and (base_disk is defined and base_disk != "") }}
+
+# ✅ เพิ่ม Force Set สำหรับ create_partition
+- name: "Force set target device for create_partition strategy"
+  ansible.builtin.set_fact:
+    target_device: "/dev/{{ selected_disk_name }}1"
+  when: 
+    - partition_strategy == 'create_partition'
+    - selected_disk_name is defined
+    - selected_disk_name != ""
+
 # Set target device for strategies ที่ไม่ผ่าน partition.yml
-- name: Set target device for non-partition strategies
+- name: Set target device for strategies that don't use partition.yml
   ansible.builtin.set_fact:
     target_device: >-
       {%- if pv_strategy == 'use_existing_pv' -%}
@@ -85,17 +101,52 @@
         {{ base_disk }}
       {%- endif -%}
   when: 
-    - partition_strategy != 'create_partition'
-    - target_device is not defined
+    - partition_strategy != 'create_partition'  # ← เพิ่ม condition นี้
+    - target_device is not defined or target_device == ""
+    - base_disk is defined and base_disk != ""
 
-- name: Debug target device after setup
+# ✅ เพิ่ม Task สร้าง partition แบบ force
+- name: "Force create partition if strategy is create_partition"
+  ansible.builtin.shell: |
+    echo "=== FORCE CREATING PARTITION ==="
+    echo "Disk: {{ base_disk }}"
+    echo "Size: {{ partition_size_gb }}GB"
+    
+    # Clear any existing partitions
+    wipefs -a "{{ base_disk }}" 2>/dev/null || true
+    
+    # Create GPT partition table
+    parted "{{ base_disk }}" --script mklabel gpt
+    
+    # Create partition
+    parted "{{ base_disk }}" --script mkpart primary 0% {{ partition_size_gb }}GB
+    
+    # Wait and refresh
+    sleep 3
+    partprobe "{{ base_disk }}"
+    
+    # Verify
+    lsblk "{{ base_disk }}"
+    
+    # Check if partition exists
+    if lsblk "{{ base_disk }}" | grep -q part; then
+      echo "SUCCESS: Partition created"
+    else
+      echo "FAILED: No partition found"
+      exit 1
+    fi
+  register: force_partition_result
+  when: 
+    - partition_strategy == 'create_partition'
+    - base_disk is defined
+    - base_disk != ""
+
+- name: "Display force partition result"
   ansible.builtin.debug:
     msg: |
-      After device setup:
-      - partition_strategy: {{ partition_strategy }}
-      - base_disk: {{ base_disk | default('undefined') }}
-      - target_device: {{ target_device | default('undefined') }}
-      - Will create PV on: {{ target_device }}
+      Force Partition Creation:
+      {{ force_partition_result.stdout if force_partition_result is defined else 'Not executed' }}
+  when: force_partition_result is defined
 
 # === PHYSICAL VOLUME ===
 - name: Create Physical Volume (if needed)

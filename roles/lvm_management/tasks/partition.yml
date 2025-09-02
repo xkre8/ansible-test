@@ -104,6 +104,25 @@
     - base_disk is defined
     - base_disk != ""
 
+# ใน partition.yml เพิ่ม task นี้ท้ายสุด
+- name: "Force set target device for create_partition strategy"
+  ansible.builtin.set_fact:
+    target_device: "/dev/{{ selected_disk_name }}1"
+  when: 
+    - partition_strategy == 'create_partition'
+    - selected_disk_name is defined
+    - selected_disk_name != ""
+
+- name: "Verify target device is set correctly"
+  ansible.builtin.debug:
+    msg: |
+      PARTITION.YML RESULT:
+      - Strategy: {{ partition_strategy }}
+      - Base disk: {{ base_disk }}
+      - Target device: {{ target_device }}
+      - Expected: /dev/{{ selected_disk_name }}1
+      - Match: {{ target_device == '/dev/' + selected_disk_name + '1' }}
+      
 - name: Display partition result
   ansible.builtin.debug:
     msg: |
