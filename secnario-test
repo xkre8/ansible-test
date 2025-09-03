@@ -1,0 +1,310 @@
+---
+# ===============================================
+# LVM MANAGEMENT ROLE - TEST SCENARIOS
+# ===============================================
+# File: test_scenarios.yml
+# Description: Complete test cases for LVM role covering all scenarios
+
+# ===============================================
+# 🟢 PASS SCENARIOS
+# ===============================================
+
+# ------------------ SCENARIO 1: CREATE PARTITION ------------------
+- name: "PASS-1: Create Partition Strategy"
+  hosts: test_servers
+  vars:
+    # Survey Variables
+    partition_strategy: "create_partition"
+    partition_size_gb: 5
+    selected_disk_name: "sdc"
+    pv_strategy: "create_new_pv"
+    vg_strategy: "create_new"
+    volume_group_name: "vg_app"
+    filesystem_config: |
+      - path: "/app"
+        lv_name: "app_lv"
+        size_mb: 2048
+        fstype: "xfs"
+      - path: "/logs"
+        lv_name: "logs_lv"
+        size_mb: 1024
+        fstype: "ext4"
+  roles:
+    - lvm_management
+  # Expected Result:
+  # ✅ Create 5GB partition on /dev/sdc
+  # ✅ PV: /dev/sdc1 (5GB)
+  # ✅ VG: vg_app (5GB, 2GB free)
+  # ✅ LV: app_lv (2GB XFS), logs_lv (1GB EXT4)
+  # ✅ Mounted: /app, /logs
+
+# ------------------ SCENARIO 2: USE WHOLE DISK ------------------
+- name: "PASS-2: Use Whole Disk Strategy"
+  hosts: test_servers
+  vars:
+    partition_strategy: "use_whole_disk"
+    selected_disk_name: "sdd"
+    pv_strategy: "create_new_pv"
+    vg_strategy: "create_new"
+    volume_group_name: "vg_data"
+    filesystem_config: |
+      - path: "/data"
+        lv_name: "data_lv"
+        size_mb: 8192
+        fstype: "xfs"
+      - path: "/backup"
+        lv_name: "backup_lv"
+        size_mb: 1024
+        fstype: "ext4"
+  roles:
+    - lvm_management
+  # Expected Result:
+  # ✅ Use whole disk /dev/sdd (10GB)
+  # ✅ PV: /dev/sdd (10GB)
+  # ✅ VG: vg_data (10GB, 1GB free)
+  # ✅ LV: data_lv (8GB XFS), backup_lv (1GB EXT4)
+
+# ------------------ SCENARIO 3: USE EXISTING PV ------------------
+- name: "PASS-3: Use Existing PV"
+  hosts: test_servers
+  vars:
+    partition_strategy: "use_whole_disk"  # ไม่สำคัญ
+    pv_strategy: "use_existing_pv"
+    existing_pv_device: "/dev/sda4"
+    vg_strategy: "extend_existing"
+    volume_group_name: "rootvg"
+    filesystem_config: |
+      - path: "/opt"
+        lv_name: "opt_lv"
+        size_mb: 5120
+        fstype: "xfs"
+  roles:
+    - lvm_management
+  # Expected Result:
+  # ✅ Use existing PV: /dev/sda4
+  # ✅ Extend existing VG: rootvg
+  # ✅ LV: opt_lv (5GB XFS)
+
+# ------------------ SCENARIO 4: AUTO-GENERATE LV NAMES ------------------
+- name: "PASS-4: Auto-Generate LV Names"
+  hosts: test_servers
+  vars:
+    partition_strategy: "create_partition"
+    partition_size_gb: 3
+    selected_disk_name: "sde"
+    pv_strategy: "create_new_pv"
+    vg_strategy: "create_new"
+    volume_group_name: "vg_auto"
+    filesystem_config: |
+      - path: "/var/www"
+        # lv_name: ""  # จะ auto-generate เป็น vg_auto_var_www
+        size_mb: 2048
+        fstype: "xfs"
+      - path: "/home/user"
+        # lv_name: ""  # จะ auto-generate เป็น vg_auto_home_user
+        size_mb: 512
+        fstype: "ext4"
+  roles:
+    - lvm_management
+  # Expected Result:
+  # ✅ Auto LV names: vg_auto_var_www, vg_auto_home_user
+
+# ------------------ SCENARIO 5: MAXIMUM SIZE USAGE ------------------
+- name: "PASS-5: Maximum Size Usage (Edge Case)"
+  hosts: test_servers
+  vars:
+    partition_strategy: "create_partition"
+    partition_size_gb: 2
+    selected_disk_name: "sdf"
+    pv_strategy: "create_new_pv"
+    vg_strategy: "create_new"
+    volume_group_name: "vg_edge"
+    filesystem_config: |
+      - path: "/test"
+        lv_name: "test_lv"
+        size_mb: 1900  # ใกล้เต็ม 2GB partition
+        fstype: "xfs"
+  roles:
+    - lvm_management
+  # Expected Result:
+  # ✅ Near-full usage (1.9GB / 2GB)
+
+# ===============================================
+# 🔴 ERROR SCENARIOS
+# ===============================================
+
+# ------------------ ERROR 1: SIZE EXCEEDED ------------------
+- name: "ERROR-1: Total Size Exceeds VG Capacity"
+  hosts: test_servers
+  vars:
+    partition_strategy: "create_partition"
+    partition_size_gb: 5
+    selected_disk_name: "sdg"
+    pv_strategy: "create_new_pv"
+    vg_strategy: "create_new"
+    volume_group_name: "vg_error1"
+    filesystem_config: |
+      - path: "/web"
+        lv_name: "web_lv"
+        size_mb: 2048
+        fstype: "xfs"
+      - path: "/database"
+        lv_name: "db_lv"
+        size_mb: 10000  # 10GB > 5GB partition
+        fstype: "ext4"
+  roles:
+    - lvm_management
+  # Expected Result:
+  # ❌ FAIL at "Validate VG size"
+  # ❌ total_requested_mb (12GB) > vg_free (5GB)
+  # ❌ NO LVs created
+  ignore_errors: yes
+
+# ------------------ ERROR 2: DISK NOT FOUND ------------------
+- name: "ERROR-2: Target Disk Does Not Exist"
+  hosts: test_servers
+  vars:
+    partition_strategy: "create_partition"
+    partition_size_gb: 5
+    selected_disk_name: "sdz"  # ❌ Disk ไม่มี
+    pv_strategy: "create_new_pv"
+    vg_strategy: "create_new"
+    volume_group_name: "vg_error2"
+    filesystem_config: |
+      - path: "/test"
+        lv_name: "test_lv"
+        size_mb: 1024
+        fstype: "xfs"
+  roles:
+    - lvm_management
+  # Expected Result:
+  # ❌ FAIL at "Create partition"
+  # ❌ parted: /dev/sdz: No such file or directory
+  ignore_errors: yes
+
+# ------------------ ERROR 3: EXISTING PV NOT FOUND ------------------
+- name: "ERROR-3: Existing PV Device Not Found"
+  hosts: test_servers
+  vars:
+    partition_strategy: "use_whole_disk"
+    pv_strategy: "use_existing_pv"
+    existing_pv_device: "/dev/sdx99"  # ❌ PV ไม่มี
+    vg_strategy: "extend_existing"
+    volume_group_name: "rootvg"
+    filesystem_config: |
+      - path: "/test"
+        lv_name: "test_lv"
+        size_mb: 1024
+        fstype: "xfs"
+  roles:
+    - lvm_management
+  # Expected Result:
+  # ❌ FAIL at "Create/Extend VG"
+  # ❌ Device /dev/sdx99 not found
+  ignore_errors: yes
+
+# ------------------ ERROR 4: VG NOT EXIST FOR EXTEND ------------------
+- name: "ERROR-4: VG Does Not Exist for Extend"
+  hosts: test_servers
+  vars:
+    partition_strategy: "use_whole_disk"
+    selected_disk_name: "sdh"
+    pv_strategy: "create_new_pv"
+    vg_strategy: "extend_existing"
+    volume_group_name: "vg_nonexist"  # ❌ VG ไม่มี
+    filesystem_config: |
+      - path: "/test"
+        lv_name: "test_lv"
+        size_mb: 1024
+        fstype: "xfs"
+  roles:
+    - lvm_management
+  # Expected Result:
+  # ❌ FAIL at "Create/Extend VG"
+  # ❌ Volume group "vg_nonexist" not found
+  ignore_errors: yes
+
+# ------------------ ERROR 5: INVALID FILESYSTEM TYPE ------------------
+- name: "ERROR-5: Invalid Filesystem Type"
+  hosts: test_servers
+  vars:
+    partition_strategy: "create_partition"
+    partition_size_gb: 3
+    selected_disk_name: "sdi"
+    pv_strategy: "create_new_pv"
+    vg_strategy: "create_new"
+    volume_group_name: "vg_error5"
+    filesystem_config: |
+      - path: "/test"
+        lv_name: "test_lv"
+        size_mb: 1024
+        fstype: "ntfs"  # ❌ Unsupported FS
+  roles:
+    - lvm_management
+  # Expected Result:
+  # ❌ FAIL at "Create LV and filesystem"
+  # ❌ mkfs.ntfs: command not found
+  ignore_errors: yes
+
+# ------------------ ERROR 6: PARTITION SIZE TOO LARGE ------------------
+- name: "ERROR-6: Partition Size Exceeds Disk"
+  hosts: test_servers
+  vars:
+    partition_strategy: "create_partition"
+    partition_size_gb: 50  # ❌ 50GB > 10GB disk
+    selected_disk_name: "sdj"
+    pv_strategy: "create_new_pv"
+    vg_strategy: "create_new"
+    volume_group_name: "vg_error6"
+    filesystem_config: |
+      - path: "/test"
+        lv_name: "test_lv"
+        size_mb: 1024
+        fstype: "xfs"
+  roles:
+    - lvm_management
+  # Expected Result:
+  # ❌ FAIL at "Create partition"
+  # ❌ parted: The resulting partition is not properly aligned
+  ignore_errors: yes
+
+# ===============================================
+# 🔧 TEST CONDITIONS SUMMARY
+# ===============================================
+
+# PASS CONDITIONS:
+# ✅ total_requested_mb ≤ vg_free_space
+# ✅ selected_disk_name exists (/dev/sdX)
+# ✅ partition_size_gb ≤ disk_size (for create_partition)
+# ✅ existing_pv_device exists (for use_existing_pv)
+# ✅ target VG exists (for extend_existing)
+# ✅ filesystem type supported (xfs, ext4, ext3, ext2)
+# ✅ Valid mount paths
+# ✅ LV names valid (alphanumeric, underscore, hyphen)
+
+# ERROR CONDITIONS:
+# ❌ total_requested_mb > vg_free_space
+# ❌ selected_disk_name not found
+# ❌ partition_size_gb > disk_size
+# ❌ existing_pv_device not found
+# ❌ VG not found (for extend_existing)
+# ❌ Unsupported filesystem type
+# ❌ Invalid mount paths
+# ❌ LV name conflicts
+
+# ===============================================
+# 🚀 HOW TO RUN TESTS
+# ===============================================
+
+# Run all scenarios:
+# ansible-playbook test_scenarios.yml
+
+# Run specific scenario:
+# ansible-playbook test_scenarios.yml --tags pass-1
+# ansible-playbook test_scenarios.yml --tags error-1
+
+# Run only PASS scenarios:
+# ansible-playbook test_scenarios.yml --tags pass
+
+# Run only ERROR scenarios:
+# ansible-playbook test_scenarios.yml --tags error
