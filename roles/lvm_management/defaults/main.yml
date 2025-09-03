@@ -2,7 +2,7 @@
 # LVM Configuration Defaults
 vg_strategy: "create_new"  # create_new, use_existing, extend_existing
 pv_strategy: "create_new_pv"  # create_new_pv, use_existing_pv
-volume_group_name: "vg_data"
+volume_group_name: ""
 
 # NEW: Partition Strategy
 partition_strategy: "use_whole_disk"  # use_whole_disk, create_partition
