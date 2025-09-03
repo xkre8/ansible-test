@@ -1,159 +1,33 @@
 ---
-# ===============================================
-# LVM MANAGEMENT ROLE - SUMMARY TASKS (JSON)
-# ===============================================
-# Purpose: Display comprehensive LVM setup summary in JSON format
-
-- name: "Gather detailed LVM information"
+- name: Get LVM information
   ansible.builtin.shell: |
-    # Get Volume Group info
-    vg_data=$(vgs --noheadings --units g --separator '|' "{{ volume_group_name }}" -o vg_name,vg_size,vg_free,pv_count 2>/dev/null || echo "{{ volume_group_name }}|||")
-    
-    # Get Physical Volume info
-    pv_data=$(pvs --noheadings --units g --separator '|' $(vgs --noheadings "{{ volume_group_name }}" -o pv_name 2>/dev/null) 2>/dev/null || echo "")
-    
-    # Get Logical Volume info
-    lv_data=$(lvs --noheadings --units g --separator '|' "{{ volume_group_name }}" -o lv_name,lv_size,lv_path 2>/dev/null || echo "")
-    
-    # Get mount information
-    mount_data=""
+    echo "=== VOLUME GROUPS ==="
+    vgs "{{ volume_group_name }}" 2>/dev/null || echo "VG not found"
+    echo ""
+    echo "=== LOGICAL VOLUMES ==="
+    lvs "{{ volume_group_name }}" 2>/dev/null || echo "No LVs found"
+    echo ""
     {% if filesystem_dirs | length > 0 %}
-    {% for item in filesystem_dirs %}
-    if mount | grep -q "{{ item.path }}"; then
-      mount_info=$(df -h "{{ item.path }}" 2>/dev/null | tail -1 | awk '{print $1"|"$2"|"$3"|"$4"|"$5"|"$6}' || echo "{{ item.path }}|||||")
-      mount_data="${mount_data}{{ item.path }}:${mount_info};"
-    fi
-    {% endfor %}
+    echo "=== MOUNT POINTS ==="
+    df -h {{ filesystem_dirs | map(attribute='path') | join(' ') }} 2>/dev/null || echo "Mount info unavailable"
+    {% else %}
+    echo "=== NO FILESYSTEMS CONFIGURED ==="
     {% endif %}
-    
-    # Get block device info
-    block_data=$(lsblk -J -o NAME,SIZE,TYPE,MOUNTPOINT 2>/dev/null | jq -c '.blockdevices' 2>/dev/null || echo "[]")
-    
-    # Output structured data
-    echo "VG_DATA:${vg_data}"
-    echo "PV_DATA:${pv_data}" 
-    echo "LV_DATA:${lv_data}"
-    echo "MOUNT_DATA:${mount_data}"
-    echo "BLOCK_DATA:${block_data}"
-  register: raw_lvm_info
+  register: lvm_info
   changed_when: false
   failed_when: false
-  tags: [summary, gather]
 
-- name: "Process and structure LVM data"
-  ansible.builtin.set_fact:
-    lvm_summary_json: |
-      {
-        "lvm_setup_summary": {
-          "status": "✅ COMPLETED",
-          "timestamp": "{{ ansible_date_time.iso8601 }}",
-          "execution_time": "{{ ansible_date_time.epoch | int - (lvm_validation_timestamp | default(ansible_date_time.iso8601) | to_datetime('%Y-%m-%dT%H:%M:%SZ')).strftime('%s') | int }} seconds",
-          "configuration": {
-            "strategies": {
-              "partition_strategy": "{{ partition_strategy }}",
-              "pv_strategy": "{{ pv_strategy }}",
-              "vg_strategy": "{{ vg_strategy }}"
-            },
-            "target_device": "{{ target_device | default('N/A') }}",
-            "volume_group_name": "{{ volume_group_name }}",
-            "partition_size_gb": {{ partition_size_gb | default(0) }}
-          },
-          "volume_group": {
-            "name": "{{ volume_group_name }}",
-            "total_size": "{{ (raw_lvm_info.stdout_lines | select('match', '^VG_DATA:') | first).split(':')[1].split('|')[1] | default('Unknown') }}",
-            "free_space": "{{ (raw_lvm_info.stdout_lines | select('match', '^VG_DATA:') | first).split(':')[1].split('|')[2] | default('Unknown') }}",
-            "pv_count": {{ (raw_lvm_info.stdout_lines | select('match', '^VG_DATA:') | first).split(':')[1].split('|')[3] | default(0) | int }}
-          },
-          "physical_volumes": [
-            {% set pv_line = raw_lvm_info.stdout_lines | select('match', '^PV_DATA:') | first | default('PV_DATA:') %}
-            {% if pv_line != 'PV_DATA:' %}
-            {% set pv_data = pv_line.split(':')[1] %}
-            {% if pv_data %}
-            {% for pv in pv_data.split(' ') if pv %}
-            {% set pv_parts = pv.split('|') %}
-            {
-              "device": "{{ pv_parts[0] | default('Unknown') }}",
-              "size": "{{ pv_parts[1] | default('Unknown') }}",
-              "free": "{{ pv_parts[2] | default('Unknown') }}"
-            }{% if not loop.last %},{% endif %}
-            {% endfor %}
-            {% endif %}
-            {% endif %}
-          ],
-          "logical_volumes": [
-            {% set lv_line = raw_lvm_info.stdout_lines | select('match', '^LV_DATA:') | first | default('LV_DATA:') %}
-            {% if lv_line != 'LV_DATA:' and filesystem_dirs | length > 0 %}
-            {% for item in filesystem_dirs %}
-            {
-              "name": "{{ item.lv_name }}",
-              "size_mb": {{ item.size_mb }},
-              "filesystem": "{{ item.fstype | default('xfs') }}",
-              "mount_path": "{{ item.path }}",
-              "device_path": "/dev/mapper/{{ volume_group_name }}-{{ item.lv_name }}"
-            }{% if not loop.last %},{% endif %}
-            {% endfor %}
-            {% endif %}
-          ],
-          "filesystems": {
-            "count": {{ filesystem_dirs | length }},
-            "total_requested_mb": {{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum if filesystem_dirs | length > 0 else 0 }},
-            "mount_status": [
-              {% if filesystem_dirs | length > 0 %}
-              {% for item in filesystem_dirs %}
-              {
-                "path": "{{ item.path }}",
-                "filesystem": "{{ item.fstype | default('xfs') }}",
-                "lv_name": "{{ item.lv_name }}",
-                "mounted": "{{ 'yes' if item.path in ansible_mounts | map(attribute='mount') else 'no' }}"
-              }{% if not loop.last %},{% endif %}
-              {% endfor %}
-              {% endif %}
-            ]
-          },
-          "system_info": {
-            "hostname": "{{ ansible_hostname }}",
-            "os": "{{ ansible_distribution }} {{ ansible_distribution_version }}",
-            "kernel": "{{ ansible_kernel }}",
-            "architecture": "{{ ansible_architecture }}"
-          },
-          "validation": {
-            "completed": {{ lvm_validation_complete | default(false) }},
-            "timestamp": "{{ lvm_validation_timestamp | default('N/A') }}"
-          }
-        }
-      }
-  tags: [summary, process]
-
-- name: "Display comprehensive LVM summary (JSON)"
-  ansible.builtin.debug:
-    msg: "{{ lvm_summary_json | from_yaml | to_nice_json }}"
-  tags: [summary, display]
-
-- name: "Display quick status overview (Human Readable)"
+- name: Display LVM summary
   ansible.builtin.debug:
     msg: |
-      {
-        "quick_summary": {
-          "status": "🎉 LVM Setup Successful",
-          "volume_group": "{{ volume_group_name }}",
-          "strategy": "{{ partition_strategy }} + {{ pv_strategy }} + {{ vg_strategy }}",
-          "filesystems_created": {{ filesystem_dirs | length }},
-          "total_space_allocated": "{{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum if filesystem_dirs | length > 0 else 0 }}MB",
-          "mount_points": {{ filesystem_dirs | map(attribute='path') | list | to_nice_json if filesystem_dirs | length > 0 else '[]' }},
-          "commands_to_verify": [
-            "pvs",
-            "vgs {{ volume_group_name }}",
-            "lvs {{ volume_group_name }}",
-            "df -h",
-            "lsblk"
-          ]
-        }
-      }
-  tags: [summary, quick]
-
-- name: "Save summary to facts"
-  ansible.builtin.set_fact:
-    lvm_setup_results: "{{ lvm_summary_json | from_yaml }}"
-    cacheable: yes
-  tags: [summary, facts]
-  # Purpose: Cache results for other roles/playbooks to use
+      
+      🎯 LVM Setup Complete!
+      Strategy: {{ vg_strategy | upper }}
+      Volume Group: {{ volume_group_name }}
+      {% if filesystem_dirs | length > 0 %}
+      Filesystems Created: {{ filesystem_dirs | length }}
+      {% else %}
+      Filesystems Created: 0 (VG only)
+      {% endif %}
+      
+      {{ lvm_info.stdout }}

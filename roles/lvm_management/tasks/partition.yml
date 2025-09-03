@@ -1,9 +1,6 @@
 ---
-# ===============================================
-# LVM MANAGEMENT ROLE - PARTITION TASKS (JSON)
-# ===============================================
-
-- name: "Get disk information"
+# === PARTITION MANAGEMENT ===
+- name: Get disk information
   ansible.builtin.shell: |
     echo "=== DISK INFO FOR {{ base_disk }} ==="
     fdisk -l "{{ base_disk }}" 2>/dev/null | head -5 || echo "Disk not found"
@@ -16,24 +13,27 @@
     - partition_strategy == 'create_partition'
     - base_disk is defined
 
-- name: "Display disk information (JSON)"
+- name: Display disk information
   ansible.builtin.debug:
     msg: |
       {
-        "disk_analysis": {
+        "disk_information": {
           "timestamp": "{{ ansible_date_time.iso8601 }}",
-          "target_disk": "{{ base_disk }}",
+          "base_disk": "{{ base_disk }}",
           "partition_size_requested": "{{ partition_size_gb }}GB",
-          "disk_info": {{ disk_info.stdout | default('') | to_nice_json }},
-          "status": "{{ 'disk_found' if disk_info.rc == 0 else 'disk_not_found' }}"
+          "disk_info_output": {{ disk_info.stdout | default('') | to_nice_json }},
+          "status": "{{ 'disk_found' if disk_info.rc == 0 else 'disk_not_found' }}",
+          "strategy": "{{ partition_strategy }}"
         }
       }
   when: 
     - partition_strategy == 'create_partition'
     - disk_info is defined
+    - disk_info.stdout is defined
 
-- name: "Check if partition already exists"
+- name: Check if partition already exists
   ansible.builtin.shell: |
+    # Check if any partitions exist on the disk
     partition_count=$(lsblk "{{ base_disk }}" -o TYPE -n | grep -c "part" || echo "0")
     if [ "$partition_count" = "0" ]; then
       echo "no_partition"
@@ -44,28 +44,38 @@
   changed_when: false
   when: partition_strategy == 'create_partition'
 
-- name: "Debug partition check (JSON)"
+- name: Debug partition check
   ansible.builtin.debug:
     msg: |
       {
-        "partition_check": {
-          "result": "{{ existing_partition_check.stdout }}",
-          "has_existing_partitions": {{ existing_partition_check.stdout == 'has_partition' }},
+        "partition_check_analysis": {
+          "timestamp": "{{ ansible_date_time.iso8601 }}",
+          "base_disk": "{{ base_disk }}",
+          "check_result": "{{ existing_partition_check.stdout }}",
+          "has_no_partitions": {{ existing_partition_check.stdout == 'no_partition' }},
           "will_create_partition": {{ (partition_strategy == 'create_partition') and (existing_partition_check.stdout == 'no_partition') }},
-          "action": "{{ 'create_new' if existing_partition_check.stdout == 'no_partition' else 'skip_existing' }}"
+          "strategy": "{{ partition_strategy }}",
+          "decision": "{{ 'create_new_partition' if existing_partition_check.stdout == 'no_partition' else 'skip_existing_partitions' }}"
         }
       }
   when: existing_partition_check is defined
 
-- name: "Create partition using parted"
+- name: Create partition using parted
   ansible.builtin.shell: |
-    echo "Creating partition on {{ base_disk }}"
-    echo "Partition size: {{ partition_size_gb }}GB"
+    echo "DEBUG: Creating partition on {{ base_disk }}"
+    echo "DEBUG: Partition size: {{ partition_size_gb }}GB"
     
-    # Clear and create partition table
-    wipefs -a "{{ base_disk }}" 2>/dev/null || true
-    parted "{{ base_disk }}" --script mklabel gpt
-    parted "{{ base_disk }}" --script mkpart primary 0% {{ partition_size_gb }}GB
+    # Check if partition table exists
+    if ! parted "{{ base_disk }}" print >/dev/null 2>&1; then
+      echo "Creating GPT partition table on {{ base_disk }}..."
+      parted "{{ base_disk }}" mklabel gpt
+    else
+      echo "Partition table already exists on {{ base_disk }}"
+    fi
+    
+    # Create partition
+    echo "Creating {{ partition_size_gb }}GB partition on {{ base_disk }}..."
+    parted "{{ base_disk }}" mkpart primary 0% {{ partition_size_gb }}GB
     
     # Wait and refresh
     sleep 3
@@ -89,25 +99,28 @@
     - existing_partition_check is defined
     - existing_partition_check.stdout == 'no_partition'
 
-- name: "Get created partition device"
+- name: Get created partition device
   ansible.builtin.shell: |
+    # First check if we just created a partition
     new_partition=$(lsblk "{{ base_disk }}" -o NAME -n | grep -v "$(basename {{ base_disk }})" | head -1 | tr -d '├─└│ ')
     if [ -n "$new_partition" ]; then
       echo "/dev/${new_partition}"
     else
-      echo "{{ base_disk }}"
+      echo "{{ base_disk }}"  # fallback to whole disk
     fi
   register: created_partition
   changed_when: false
-  when: partition_strategy == 'create_partition'
+  when: 
+    - partition_strategy == 'create_partition'
 
-- name: "Set partition as target device"
+- name: Set partition as target device
   ansible.builtin.set_fact:
     target_device: "{{ created_partition.stdout if (partition_strategy == 'create_partition' and created_partition is defined and created_partition.stdout is defined) else base_disk }}"
   when: 
     - base_disk is defined
     - base_disk != ""
 
+# ใน partition.yml เพิ่ม task นี้ท้ายสุด
 - name: "Force set target device for create_partition strategy"
   ansible.builtin.set_fact:
     target_device: "/dev/{{ selected_disk_name }}1"
@@ -116,54 +129,68 @@
     - selected_disk_name is defined
     - selected_disk_name != ""
 
-- name: "Display partition operation summary (JSON)"
+- name: "Verify target device is set correctly"
+  ansible.builtin.debug:
+    msg: |
+      {
+        "target_device_verification": {
+          "timestamp": "{{ ansible_date_time.iso8601 }}",
+          "partition_yml_result": {
+            "strategy": "{{ partition_strategy }}",
+            "base_disk": "{{ base_disk }}",
+            "target_device": "{{ target_device }}",
+            "expected_device": "/dev/{{ selected_disk_name }}1",
+            "device_match": {{ target_device == '/dev/' + selected_disk_name + '1' }},
+            "selected_disk_name": "{{ selected_disk_name }}"
+          },
+          "validation": {
+            "target_device_defined": {{ target_device is defined }},
+            "target_device_not_empty": {{ target_device != '' if target_device is defined else false }},
+            "strategy_consistent": {{ partition_strategy == 'create_partition' }},
+            "expected_format_match": {{ target_device == '/dev/' + selected_disk_name + '1' if target_device is defined and selected_disk_name is defined else false }}
+          }
+        }
+      }
+
+- name: Display partition result
   ansible.builtin.debug:
     msg: |
       {
         "partition_operation_summary": {
           "timestamp": "{{ ansible_date_time.iso8601 }}",
-          "strategy": "{{ partition_strategy }}",
           "configuration": {
+            "partition_strategy": "{{ partition_strategy }}",
             "base_disk": "{{ base_disk | default('undefined') }}",
             "target_device": "{{ target_device | default('undefined') }}",
-            "partition_size_gb": {{ partition_size_gb | default(0) }},
-            "expected_device": "/dev/{{ selected_disk_name }}1"
+            "partition_size_gb": {{ partition_size_gb | default(0) }}
           },
-          "operation_status": {
-            "partition_check_executed": {{ existing_partition_check is defined }},
-            "existing_partitions": "{{ existing_partition_check.stdout | default('unknown') }}",
-            "partition_creation_executed": {{ partition_creation is defined }},
-            "creation_successful": {{ partition_creation is defined and partition_creation.rc == 0 }},
-            "device_detection_executed": {{ created_partition is defined }},
-            "detected_device": "{{ created_partition.stdout | default('none') }}"
+          "operation_details": {
+            {% if partition_strategy == 'create_partition' %}
+            "partition_check": {
+              "executed": {{ existing_partition_check is defined }},
+              "result": "{{ existing_partition_check.stdout | default('not_executed') }}"
+            },
+            "partition_creation": {
+              "executed": {{ partition_creation is defined }},
+              "successful": {{ partition_creation is defined and partition_creation.rc == 0 }},
+              "skipped": {{ partition_creation is defined and partition_creation.skipped is defined }},
+              "skip_reason": "{{ partition_creation.skip_reason | default('N/A') if partition_creation is defined and partition_creation.skipped is defined else 'N/A' }}",
+              "output": {{ partition_creation.stdout | default('') | to_nice_json if partition_creation is defined and partition_creation.stdout is defined else '""' }}
+            },
+            "device_detection": {
+              "executed": {{ created_partition is defined }},
+              "detected_device": "{{ created_partition.stdout | default('FAILED') if created_partition is defined else 'not_executed' }}",
+              "fallback_used": {{ created_partition.stdout == base_disk if created_partition is defined and created_partition.stdout is defined else false }}
+            }
+            {% else %}
+            "note": "Using whole disk strategy - no partition creation required",
+            "target_device_source": "base_disk"
+            {% endif %}
           },
-          "validation": {
-            "target_device_matches_expected": {{ target_device == '/dev/' + selected_disk_name + '1' if target_device is defined and selected_disk_name is defined else false }},
-            "strategy_consistent": {{ partition_strategy == 'create_partition' }}
-          },
-          "next_steps": [
-            "PV creation on {{ target_device | default('TBD') }}",
-            "VG creation/extension",
-            "LV creation"
-          ]
+          "final_status": {
+            "target_device_set": {{ target_device is defined and target_device != '' }},
+            "ready_for_pv_creation": {{ target_device is defined and target_device != '' }},
+            "operation_type": "{{ 'partition_created' if partition_strategy == 'create_partition' else 'whole_disk_used' }}"
+          }
         }
       }
-  when: partition_strategy == 'create_partition'
-
-- name: "Display whole disk strategy summary (JSON)"
-  ansible.builtin.debug:
-    msg: |
-      {
-        "whole_disk_strategy": {
-          "timestamp": "{{ ansible_date_time.iso8601 }}",
-          "strategy": "{{ partition_strategy }}",
-          "target_device": "{{ base_disk | default('undefined') }}",
-          "note": "Skipping partition creation - using whole disk",
-          "next_steps": [
-            "PV creation on {{ base_disk | default('TBD') }}",
-            "VG creation/extension",
-            "LV creation"
-          ]
-        }
-      }
-  when: partition_strategy == 'use_whole_disk'
