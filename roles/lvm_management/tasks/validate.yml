@@ -1,5 +1,4 @@
 # ---
-# # Basic validation only
 # - name: Check required variables
 #   ansible.builtin.fail:
 #     msg: "Missing required variable: {{ item }}"
@@ -7,25 +6,34 @@
 #   loop:
 #     - volume_group_name
 
+# - name: Validate partition strategy
+#   ansible.builtin.fail:
+#     msg: "partition_strategy must be 'use_whole_disk' or 'create_partition'"
+#   when: partition_strategy not in ['use_whole_disk', 'create_partition']
+
+# - name: Validate partition size
+#   ansible.builtin.fail:
+#     msg: "partition_size_gb must be between 1 and 1000 GB"
+#   when: 
+#     - partition_strategy == 'create_partition'
+#     - (partition_size_gb | int) < 1 or (partition_size_gb | int) > 1000
+
 # - name: Check device is specified when needed
 #   ansible.builtin.fail:
-#     msg: |
-#       Device required for {{ vg_strategy }} strategy!
-#       Specify: selected_disk_name, manual_lvm_device, or existing_pv_device
+#     msg: "Device required! Specify: selected_disk_name, manual_lvm_device, or existing_pv_device"
 #   when:
 #     - vg_strategy in ['create_new', 'extend_existing']
 #     - selected_disk_name == ""
 #     - manual_lvm_device == ""
-#     - existing_pv_device == "" or pv_strategy != 'use_existing_pv'
+#     - (existing_pv_device == "" or pv_strategy != 'use_existing_pv')
 
-# - name: Validate device exists
+# - name: Validate base disk exists
 #   ansible.builtin.stat:
-#     path: "{{ target_device }}"
+#     path: "{{ base_disk }}"
 #   register: device_check
 #   failed_when: not device_check.stat.exists
 #   when: 
-#     - target_device is defined
-#     - target_device != ""
+#     - base_disk is defined and base_disk != ""
 #     - vg_strategy in ['create_new', 'extend_existing']
 
 # - name: Check VG exists for use_existing strategy
@@ -35,68 +43,351 @@
 #   changed_when: false
 #   when: vg_strategy == 'use_existing'
 
-# - name: Check VG doesn't exist for create_new strategy
-#   ansible.builtin.command: vgs --noheadings "{{ volume_group_name }}"
-#   register: vg_exists
-#   failed_when: vg_exists.rc == 0
-#   changed_when: false
-#   when: vg_strategy == 'create_new'
+# - name: Validate filesystem configuration
+#   ansible.builtin.fail:
+#     msg: |
+#       Invalid filesystem config! Check:
+#       - path, lv_name, size_mb are required
+#       - size_mb must be positive number
+#       - fstype must be: xfs, ext4, ext3, ext2
+#   when: 
+#     - filesystem_dirs | length > 0
+#     - item.path is not defined or item.lv_name is not defined or 
+#       item.size_mb is not defined or (item.size_mb | int) <= 0 or
+#       (item.fstype is defined and item.fstype not in ['xfs', 'ext4', 'ext3', 'ext2'])
+#   loop: "{{ filesystem_dirs }}"
 
 ---
-- name: Check required variables
+# ===============================================
+# LVM MANAGEMENT ROLE - VALIDATION TASKS
+# ===============================================
+# Purpose: Comprehensive validation before LVM operations
+# Prevents conflicts, validates inputs, and ensures prerequisites
+
+# ------------------ BASIC REQUIREMENTS ------------------
+- name: "Check required variables"
   ansible.builtin.fail:
-    msg: "Missing required variable: {{ item }}"
+    msg: "❌ Missing required variable: {{ item }}"
   when: vars[item] is not defined or vars[item] == ""
   loop:
     - volume_group_name
+  tags: [validation, basic]
+  # Purpose: Ensure essential variables are defined
+  # Prevents runtime failures due to missing core variables
 
-- name: Validate partition strategy
-  ansible.builtin.fail:
-    msg: "partition_strategy must be 'use_whole_disk' or 'create_partition'"
-  when: partition_strategy not in ['use_whole_disk', 'create_partition']
-
-- name: Validate partition size
-  ansible.builtin.fail:
-    msg: "partition_size_gb must be between 1 and 1000 GB"
-  when: 
-    - partition_strategy == 'create_partition'
-    - (partition_size_gb | int) < 1 or (partition_size_gb | int) > 1000
-
-- name: Check device is specified when needed
-  ansible.builtin.fail:
-    msg: "Device required! Specify: selected_disk_name, manual_lvm_device, or existing_pv_device"
-  when:
-    - vg_strategy in ['create_new', 'extend_existing']
-    - selected_disk_name == ""
-    - manual_lvm_device == ""
-    - (existing_pv_device == "" or pv_strategy != 'use_existing_pv')
-
-- name: Validate base disk exists
-  ansible.builtin.stat:
-    path: "{{ base_disk }}"
-  register: device_check
-  failed_when: not device_check.stat.exists
-  when: 
-    - base_disk is defined and base_disk != ""
-    - vg_strategy in ['create_new', 'extend_existing']
-
-- name: Check VG exists for use_existing strategy
-  ansible.builtin.command: vgs --noheadings "{{ volume_group_name }}"
-  register: vg_check
-  failed_when: vg_check.rc != 0
-  changed_when: false
-  when: vg_strategy == 'use_existing'
-
-- name: Validate filesystem configuration
+# ------------------ STRATEGY VALIDATION ------------------
+- name: "Validate partition strategy"
   ansible.builtin.fail:
     msg: |
-      Invalid filesystem config! Check:
-      - path, lv_name, size_mb are required
-      - size_mb must be positive number
-      - fstype must be: xfs, ext4, ext3, ext2
+      ❌ Invalid partition_strategy: {{ partition_strategy | default('undefined') }}
+      ✅ Valid options: 'use_whole_disk' or 'create_partition'
+  when: partition_strategy not in ['use_whole_disk', 'create_partition']
+  tags: [validation, strategy]
+  # Purpose: Ensure partition strategy is valid
+  # Prevents undefined behavior in device setup
+
+- name: "Validate PV strategy"
+  ansible.builtin.fail:
+    msg: |
+      ❌ Invalid pv_strategy: {{ pv_strategy | default('undefined') }}
+      ✅ Valid options: 'create_new_pv' or 'use_existing_pv'
+  when: pv_strategy not in ['create_new_pv', 'use_existing_pv']
+  tags: [validation, strategy]
+  # Purpose: Ensure PV strategy is valid
+  # Prevents invalid PV operations
+
+- name: "Validate VG strategy"
+  ansible.builtin.fail:
+    msg: |
+      ❌ Invalid vg_strategy: {{ vg_strategy | default('undefined') }}
+      ✅ Valid options: 'create_new', 'use_existing', or 'extend_existing'
+  when: vg_strategy not in ['create_new', 'use_existing', 'extend_existing']
+  tags: [validation, strategy]
+  # Purpose: Ensure VG strategy is valid
+  # Prevents invalid VG operations
+
+# ------------------ STRATEGY CONFLICT DETECTION ------------------
+- name: "Check for strategy conflicts"
+  ansible.builtin.fail:
+    msg: |
+      ❌ INVALID COMBINATION DETECTED:
+      partition_strategy: {{ partition_strategy }}
+      pv_strategy: {{ pv_strategy }}
+      
+      🚫 CONFLICT: Cannot create partition when using existing PV!
+      
+      ✅ Valid combinations:
+      • create_partition + create_new_pv (Create partition then PV)
+      • use_whole_disk + create_new_pv (Use whole disk as PV)  
+      • use_whole_disk + use_existing_pv (Use existing PV)
+      
+      ❌ Invalid combination:
+      • create_partition + use_existing_pv (CONFLICTING LOGIC)
+  when: 
+    - partition_strategy == 'create_partition'
+    - pv_strategy == 'use_existing_pv'
+  tags: [validation, conflict]
+  # Purpose: Prevent logical conflicts between strategies
+  # Ensures coherent device setup workflow
+
+# ------------------ SIZE AND RANGE VALIDATION ------------------
+- name: "Validate partition size range"
+  ansible.builtin.fail:
+    msg: |
+      ❌ Invalid partition_size_gb: {{ partition_size_gb | default('undefined') }}
+      ✅ Must be between 1 and 1000 GB
+      ℹ️  Current value: {{ partition_size_gb | default('not set') }}GB
+  when: 
+    - partition_strategy == 'create_partition'
+    - (partition_size_gb is not defined or (partition_size_gb | int) < 1 or (partition_size_gb | int) > 1000)
+  tags: [validation, size]
+  # Purpose: Ensure partition size is within reasonable limits
+  # Prevents disk space issues and unrealistic partition sizes
+
+# ------------------ DEVICE SPECIFICATION VALIDATION ------------------
+- name: "Check device specification requirements"
+  ansible.builtin.fail:
+    msg: |
+      ❌ Missing device specification!
+      
+      📋 Requirements by strategy:
+      For create_new_pv: selected_disk_name OR manual_lvm_device required
+      For use_existing_pv: existing_pv_device required
+      
+      📊 Current values:
+      • selected_disk_name: {{ selected_disk_name | default('not set') }}
+      • manual_lvm_device: {{ manual_lvm_device | default('not set') }}
+      • existing_pv_device: {{ existing_pv_device | default('not set') }}
+      • pv_strategy: {{ pv_strategy }}
+  when: |
+    (pv_strategy == 'create_new_pv' and 
+     (selected_disk_name is not defined or selected_disk_name == "") and
+     (manual_lvm_device is not defined or manual_lvm_device == "")) or
+    (pv_strategy == 'use_existing_pv' and 
+     (existing_pv_device is not defined or existing_pv_device == ""))
+  tags: [validation, device]
+  # Purpose: Ensure required device parameters are specified
+  # Prevents operations without target devices
+
+# ------------------ DEVICE EXISTENCE VALIDATION ------------------
+- name: "Set base disk for validation"
+  ansible.builtin.set_fact:
+    validation_disk: >-
+      {%- if pv_strategy == 'use_existing_pv' -%}
+        {{ existing_pv_device }}
+      {%- elif manual_lvm_device != '' -%}
+        {{ manual_lvm_device }}
+      {%- elif selected_disk_name != '' -%}
+        {{ '/dev/' + selected_disk_name }}
+      {%- else -%}
+        ''
+      {%- endif -%}
+  tags: [validation, device]
+  # Purpose: Determine which disk to validate based on strategy
+  # Creates unified validation target
+
+- name: "Validate target device exists"
+  ansible.builtin.stat:
+    path: "{{ validation_disk }}"
+  register: device_check
+  when: 
+    - validation_disk != ''
+    - pv_strategy == 'create_new_pv' or pv_strategy == 'use_existing_pv'
+  tags: [validation, device]
+  # Purpose: Check if target device physically exists
+  # Prevents operations on non-existent devices
+
+- name: "Fail if target device not found"
+  ansible.builtin.fail:
+    msg: |
+      ❌ Target device not found: {{ validation_disk }}
+      
+      🔍 Device check results:
+      • Path: {{ validation_disk }}
+      • Exists: {{ device_check.stat.exists | default('not checked') }}
+      • Type: {{ device_check.stat.mode | default('unknown') if device_check.stat.exists else 'N/A' }}
+      
+      💡 Troubleshooting:
+      • Verify disk is attached: lsblk
+      • Check device name: ls /dev/sd*
+      • Ensure correct permissions
+  when: 
+    - device_check is defined
+    - not device_check.stat.exists
+  tags: [validation, device]
+  # Purpose: Provide clear error when device doesn't exist
+  # Includes troubleshooting information
+
+# ------------------ VOLUME GROUP VALIDATION ------------------
+- name: "Check if VG exists (for use_existing strategy)"
+  ansible.builtin.shell: |
+    if vgs --noheadings "{{ volume_group_name }}" >/dev/null 2>&1; then
+      echo "exists"
+    else
+      echo "not_exists"
+    fi
+  register: vg_exists_check
+  changed_when: false
+  when: vg_strategy == 'use_existing'
+  tags: [validation, vg]
+  # Purpose: Verify VG exists when using existing strategy
+  # Prevents operations on non-existent VGs
+
+- name: "Fail if VG doesn't exist for use_existing"
+  ansible.builtin.fail:
+    msg: |
+      ❌ Volume Group not found: {{ volume_group_name }}
+      
+      📋 Strategy: use_existing requires existing VG
+      🔍 VG Status: {{ vg_exists_check.stdout | default('unknown') }}
+      
+      💡 Available VGs:
+      Run: vgs --noheadings -o vg_name
+  when: 
+    - vg_strategy == 'use_existing'
+    - vg_exists_check is defined
+    - vg_exists_check.stdout == 'not_exists'
+  tags: [validation, vg]
+  # Purpose: Ensure VG exists when trying to use existing one
+  # Provides helpful commands for troubleshooting
+
+- name: "Check if VG already exists (for create_new strategy)"
+  ansible.builtin.shell: |
+    if vgs --noheadings "{{ volume_group_name }}" >/dev/null 2>&1; then
+      echo "exists"
+    else
+      echo "not_exists"
+    fi
+  register: vg_create_check
+  changed_when: false
+  when: vg_strategy == 'create_new'
+  tags: [validation, vg]
+  # Purpose: Check for VG name conflicts when creating new
+  # Prevents accidental overwrites
+
+- name: "Warn if VG exists for create_new strategy"
+  ansible.builtin.fail:
+    msg: |
+      ⚠️  Volume Group already exists: {{ volume_group_name }}
+      
+      📋 Strategy: create_new requires non-existing VG name
+      🔍 VG Status: {{ vg_create_check.stdout | default('unknown') }}
+      
+      💡 Solutions:
+      • Use different VG name
+      • Change strategy to 'extend_existing'
+      • Remove existing VG: vgremove {{ volume_group_name }}
+  when: 
+    - vg_strategy == 'create_new'
+    - vg_create_check is defined
+    - vg_create_check.stdout == 'exists'
+  tags: [validation, vg]
+  # Purpose: Prevent VG name conflicts when creating new
+  # Provides solution options
+
+# ------------------ FILESYSTEM CONFIGURATION VALIDATION ------------------
+- name: "Validate filesystem configuration structure"
+  ansible.builtin.fail:
+    msg: |
+      ❌ Invalid filesystem configuration item {{ ansible_loop.index }}:
+      
+      📋 Required fields:
+      • path: {{ item.path | default('❌ MISSING') }}
+      • size_mb: {{ item.size_mb | default('❌ MISSING') }}
+      
+      📋 Optional fields:
+      • lv_name: {{ item.lv_name | default('(auto-generate)') }}
+      • fstype: {{ item.fstype | default('xfs') }}
+      
+      ✅ Supported filesystems: xfs, ext4, ext3, ext2
+      ✅ size_mb must be positive integer
+      
+      🔧 Current item validation:
+      • Path defined: {{ (item.path is defined and item.path != '') }}
+      • Size valid: {{ (item.size_mb is defined and (item.size_mb | int) > 0) }}
+      • FS type valid: {{ (item.fstype is not defined or item.fstype in ['xfs', 'ext4', 'ext3', 'ext2']) }}
   when: 
     - filesystem_dirs | length > 0
-    - item.path is not defined or item.lv_name is not defined or 
-      item.size_mb is not defined or (item.size_mb | int) <= 0 or
+    - (item.path is not defined or item.path == '') or
+      (item.size_mb is not defined or (item.size_mb | int) <= 0) or
       (item.fstype is defined and item.fstype not in ['xfs', 'ext4', 'ext3', 'ext2'])
   loop: "{{ filesystem_dirs }}"
+  loop_control:
+    extended: yes
+  tags: [validation, filesystem]
+  # Purpose: Validate each filesystem configuration item
+  # Ensures all required fields are present and valid
+
+# ------------------ DUPLICATE VALIDATION ------------------
+- name: "Check for duplicate mount paths"
+  ansible.builtin.fail:
+    msg: |
+      ❌ Duplicate mount paths detected!
+      
+      🔍 Duplicate path: {{ item }}
+      📊 Mount paths: {{ filesystem_dirs | map(attribute='path') | list }}
+      
+      💡 Each filesystem must have unique mount path
+  when: 
+    - filesystem_dirs | length > 0
+    - (filesystem_dirs | map(attribute='path') | list).count(item) > 1
+  loop: "{{ filesystem_dirs | map(attribute='path') | list | unique }}"
+  tags: [validation, filesystem]
+  # Purpose: Prevent duplicate mount paths
+  # Ensures no mount point conflicts
+
+# ------------------ VALIDATION SUMMARY ------------------
+- name: "Display validation summary"
+  ansible.builtin.debug:
+    msg: |
+      {
+        "validation_status": "✅ PASSED",
+        "timestamp": "{{ ansible_date_time.iso8601 }}",
+        "configuration": {
+          "strategies": {
+            "partition_strategy": "{{ partition_strategy }}",
+            "pv_strategy": "{{ pv_strategy }}",
+            "vg_strategy": "{{ vg_strategy }}"
+          },
+          "devices": {
+            "selected_disk_name": "{{ selected_disk_name | default('') }}",
+            "manual_lvm_device": "{{ manual_lvm_device | default('') }}",
+            "existing_pv_device": "{{ existing_pv_device | default('') }}",
+            "validation_disk": "{{ validation_disk | default('') }}"
+          },
+          "volume_group": {
+            "name": "{{ volume_group_name }}",
+            "strategy": "{{ vg_strategy }}"
+          },
+          "partition": {
+            "enabled": {{ partition_strategy == 'create_partition' }},
+            "size_gb": {{ partition_size_gb | default(0) }}
+          },
+          "filesystems": {
+            "count": {{ filesystem_dirs | length }},
+            "total_size_mb": {{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum if filesystem_dirs | length > 0 else 0 }},
+            "configs": {{ filesystem_dirs | to_nice_json }}
+          }
+        },
+        "validation_checks": {
+          "required_variables": "✅ Passed",
+          "strategy_validation": "✅ Passed", 
+          "conflict_detection": "✅ Passed",
+          "device_existence": "✅ Passed",
+          "vg_requirements": "✅ Passed",
+          "filesystem_config": "✅ Passed",
+          "duplicate_check": "✅ Passed"
+        }
+      }
+  tags: [validation, summary]
+  # Purpose: Provide comprehensive validation summary in JSON format
+  # Useful for debugging and audit trails
+
+# ------------------ VALIDATION COMPLETE ------------------
+- name: "Mark validation as complete"
+  ansible.builtin.set_fact:
+    lvm_validation_complete: true
+    lvm_validation_timestamp: "{{ ansible_date_time.iso8601 }}"
+  tags: [validation]
+  # Purpose: Set flag indicating successful validation
+  # Can be used by subsequent tasks to verify validation ran
