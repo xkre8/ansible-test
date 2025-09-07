@@ -42,52 +42,101 @@
         {{ '/dev/' + selected_disk_name }}
       {%- endif -%}
 
-# === CREATE PARTITION ===
-- name: Create partition
-  ansible.builtin.shell: |
-    wipefs -a "/dev/{{ selected_disk_name }}" 2>/dev/null || true
-    parted "/dev/{{ selected_disk_name }}" --script mklabel gpt
-    parted "/dev/{{ selected_disk_name }}" --script mkpart primary 0% {{ partition_size_gb }}GB
-    sleep 2 && partprobe "/dev/{{ selected_disk_name }}"
+# === CREATE PARTITIONS ===
+- name: Create GPT partition table
+  community.general.parted:
+    device: "/dev/{{ selected_disk_name }}"
+    label: gpt
+    state: present
+  when: 
+    - partition_strategy == 'create_partition'
+    - pv_strategy == 'create_new_pv'
+
+- name: Create primary partition
+  community.general.parted:
+    device: "/dev/{{ selected_disk_name }}"
+    number: 1
+    part_start: 0%
+    part_end: "{{ partition_size_gb }}GB"
+    part_type: primary
+    state: present
+  when: 
+    - partition_strategy == 'create_partition'
+    - pv_strategy == 'create_new_pv'
+
+- name: Create secondary partition (remaining space)
+  community.general.parted:
+    device: "/dev/{{ selected_disk_name }}"
+    number: 2
+    part_start: "{{ partition_size_gb }}GB"
+    part_end: 100%
+    part_type: primary
+    state: present
+  when: 
+    - partition_strategy == 'create_partition'
+    - pv_strategy == 'create_new_pv'
+
+- name: Wait for partition devices
+  ansible.builtin.wait_for:
+    path: "/dev/{{ selected_disk_name }}{{ item }}"
+    timeout: 30
+  loop: [1, 2]
   when: 
     - partition_strategy == 'create_partition'
     - pv_strategy == 'create_new_pv'
 
 # === CREATE PV ===
 - name: Create PV
-  ansible.builtin.shell: pvcreate "{{ target_device }}"
+  community.general.lvg:
+    vg: "{{ volume_group_name }}"
+    pvs: "{{ target_device }}"
+    state: present
   register: pv_result
-  failed_when: pv_result.rc != 0 and 'already' not in pv_result.stderr
   when: 
     - pv_strategy == 'create_new_pv'
 
 # === CREATE VG ===
 - name: Create/Extend VG
-  ansible.builtin.shell: |
-    if vgs "{{ volume_group_name }}" 2>/dev/null; then
-      vgextend "{{ volume_group_name }}" "{{ target_device }}"
-    else
-      vgcreate "{{ volume_group_name }}" "{{ target_device }}"
-    fi
+  community.general.lvg:
+    vg: "{{ volume_group_name }}"
+    pvs: "{{ target_device }}"
+    state: present
   when: vg_strategy in ['create_new', 'extend_existing']
 
 # === SIZE VALIDATION ===
+- name: Get VG information
+  community.general.lvg:
+    vg: "{{ volume_group_name }}"
+    state: present
+  register: vg_info
+
 - name: Validate VG size
-  ansible.builtin.shell: |
-    vg_free=$(vgs --noheadings --units m "{{ volume_group_name }}" -o vg_free | sed 's/[^0-9.]//g' | cut -d. -f1)
-    [ "{{ total_requested_mb | default(0) }}" -le "$vg_free" ] || exit 1
+  ansible.builtin.assert:
+    that:
+      - "{{ total_requested_mb | default(0) }} <= {{ (vg_info.size_available | default(0) / 1024 / 1024) | int }}"
+    fail_msg: "Insufficient space in VG. Required: {{ total_requested_mb }}MB, Available: {{ (vg_info.size_available | default(0) / 1024 / 1024) | int }}MB"
   when: filesystem_dirs | length > 0
 
 # === CREATE LV & FILESYSTEM ===
-- name: Create LV and filesystem
-  ansible.builtin.shell: |
-    lvcreate -L "{{ item.size_mb }}M" -n "{{ item.lv_name }}" "{{ volume_group_name }}"
-    mkfs.{{ item.fstype }} "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+- name: Create LV
+  community.general.lvol:
+    vg: "{{ volume_group_name }}"
+    lv: "{{ item.lv_name }}"
+    size: "{{ item.size_mb }}M"
+    state: present
+  loop: "{{ filesystem_dirs }}"
+  when: filesystem_dirs | length > 0
+
+- name: Create filesystem
+  community.general.filesystem:
+    fstype: "{{ item.fstype }}"
+    dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
+    state: present
   loop: "{{ filesystem_dirs }}"
   when: filesystem_dirs | length > 0
 
 # === MOUNT ===
-- name: Create mount point and mount
+- name: Create mount point
   ansible.builtin.file:
     path: "{{ item.path }}"
     state: directory
@@ -99,7 +148,7 @@
     path: "{{ item.path }}"
     src: "/dev/mapper/{{ volume_group_name }}-{{ item.lv_name }}"
     fstype: "{{ item.fstype }}"
-    opts: "defaults"
+    opts: defaults
     dump: >-
       {%- if item.fstype == 'xfs' -%}
       0
