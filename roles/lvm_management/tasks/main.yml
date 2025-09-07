@@ -87,18 +87,18 @@
     - pv_strategy == 'create_new_pv'
     - vg_strategy in ['create_new', 'extend_existing']
 
-# === SIZE VALIDATION ===
-- name: Get VG information
-  community.general.lvg:
-    vg: "{{ volume_group_name }}"
-    state: present
-  register: vg_info
 
-- name: Validate VG size
+# === SIZE VALIDATION ===
+- name: Get detailed VG information
+  ansible.builtin.shell: vgdisplay {{ volume_group_name }} | grep "Free.*Size" | awk '{print $5}' | sed 's/\..*//'
+  register: vg_free_gb
+  changed_when: false
+
+- name: Convert GB to MB and validate
   ansible.builtin.assert:
     that:
-      - "{{ total_requested_mb | default(0) }} <= {{ (vg_info.size_available | default(0) / 1024 / 1024) | int }}"
-    fail_msg: "Insufficient space in VG. Required: {{ total_requested_mb }}MB, Available: {{ (vg_info.size_available | default(0) / 1024 / 1024) | int }}MB"
+      - "{{ total_requested_mb | default(0) }} <= {{ (vg_free_gb.stdout | default('0') | int * 1024) }}"
+    fail_msg: "Insufficient space in VG. Required: {{ total_requested_mb }}MB, Available: {{ (vg_free_gb.stdout | default('0') | int * 1024) }}MB"
   when: filesystem_dirs | length > 0
 
 # === CREATE LV & FILESYSTEM ===
