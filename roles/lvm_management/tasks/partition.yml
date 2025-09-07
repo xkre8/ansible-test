@@ -43,7 +43,7 @@
       Planned: {{ partition_size_gb }}GB primary + remaining secondary
   when: existing_partition_check is defined
 
-- name: Create partitions using parted (Primary + Remaining)
+- name: Create partitions using parted (Primary + Remaining) - FIXED
   ansible.builtin.shell: |
     disk="{{ base_disk }}"
     primary_size="{{ partition_size_gb }}"
@@ -57,13 +57,25 @@
     wipefs -a "$disk" 2>/dev/null || true
     parted "$disk" --script mklabel gpt
     
-    # Create primary partition (specified size)
+    # Get disk size in GB for calculation
+    disk_size_gb=$(lsblk "$disk" -b -n -o SIZE | awk '{print int($1/1024/1024/1024)}')
+    remaining_start_gb=$((primary_size))
+    
+    echo "Disk size: ${disk_size_gb}GB"
+    echo "Primary partition: 0GB to ${primary_size}GB"
+    echo "Secondary partition: ${remaining_start_gb}GB to ${disk_size_gb}GB"
+    
+    # Create primary partition with exact size
     echo "Creating primary partition: ${primary_size}GB"
-    parted "$disk" --script mkpart primary 0% "${primary_size}GB"
+    parted "$disk" --script mkpart primary ext4 0GB "${primary_size}GB"
     
     # Create secondary partition (remaining space)  
     echo "Creating secondary partition: remaining space"
-    parted "$disk" --script mkpart primary "${primary_size}GB" 100%
+    parted "$disk" --script mkpart primary ext4 "${primary_size}GB" "${disk_size_gb}GB"
+    
+    # Alternative approach - use sectors instead of GB
+    # parted "$disk" --script mkpart primary 2048s "$((primary_size * 1024 * 1024 * 2))s"
+    # parted "$disk" --script mkpart primary "$((primary_size * 1024 * 1024 * 2 + 1))s" 100%
     
     # Wait and refresh
     sleep 3
@@ -71,13 +83,14 @@
     
     echo "=== VERIFICATION ==="
     lsblk "$disk"
+    parted "$disk" print
     
     # Verify partitions were created
     partition_count=$(lsblk "$disk" -o TYPE -n | grep -c "part" || echo "0")
     if [ "$partition_count" -ge "2" ]; then
       echo "SUCCESS: Created $partition_count partitions"
-      echo "Primary partition: $(lsblk "$disk" -o NAME -n | sed -n '2p' | tr -d '├─└│ ')"
-      echo "Secondary partition: $(lsblk "$disk" -o NAME -n | sed -n '3p' | tr -d '├─└│ ')"
+      echo "Primary partition: $(lsblk "$disk" -o NAME,SIZE -n | sed -n '2p')"
+      echo "Secondary partition: $(lsblk "$disk" -o NAME,SIZE -n | sed -n '3p')"
     else
       echo "ERROR: Failed to create both partitions! Only $partition_count found"
       exit 1
