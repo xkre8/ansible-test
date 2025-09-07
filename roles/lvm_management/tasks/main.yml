@@ -89,16 +89,24 @@
 
 
 # === SIZE VALIDATION ===
-- name: Get detailed VG information
-  ansible.builtin.shell: vgdisplay {{ volume_group_name }} | grep "Free.*Size" | awk '{print $5}' | sed 's/\..*//'
-  register: vg_free_gb
+- name: Get VG free space
+  ansible.builtin.command: vgs {{ volume_group_name }} --units m --noheadings -o vg_free --nosuffix
+  register: vg_free_mb
   changed_when: false
 
-- name: Convert GB to MB and validate
+- name: Debug VG information
+  ansible.builtin.debug:
+    msg: |
+      VG: {{ volume_group_name }}
+      Available space: {{ vg_free_mb.stdout.strip() }}MB
+      Required space: {{ total_requested_mb }}MB
+      Target device: {{ target_device }}
+
+- name: Validate VG size
   ansible.builtin.assert:
     that:
-      - "{{ total_requested_mb | default(0) }} <= {{ (vg_free_gb.stdout | default('0') | int * 1024) }}"
-    fail_msg: "Insufficient space in VG. Required: {{ total_requested_mb }}MB, Available: {{ (vg_free_gb.stdout | default('0') | int * 1024) }}MB"
+      - "{{ total_requested_mb | default(0) }} <= {{ vg_free_mb.stdout.strip() | int }}"
+    fail_msg: "Insufficient space in VG. Required: {{ total_requested_mb }}MB, Available: {{ vg_free_mb.stdout.strip() }}MB"
   when: filesystem_dirs | length > 0
 
 # === CREATE LV & FILESYSTEM ===
