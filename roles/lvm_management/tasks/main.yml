@@ -43,18 +43,11 @@
       {%- endif -%}
 
 # === CREATE PARTITIONS ===
-- name: Create GPT partition table (only)
-  community.general.parted:
-    device: "/dev/{{ selected_disk_name }}"
-    label: gpt
-    state: present
-  when: 
-    - partition_strategy == 'create_partition'
-    - pv_strategy == 'create_new_pv'
-
+# === CREATE PARTITIONS ===
 - name: Create both partitions
   community.general.parted:
     device: "/dev/{{ selected_disk_name }}"
+    label: gpt
     number: "{{ item.number }}"
     part_start: "{{ item.start }}"
     part_end: "{{ item.end }}"
@@ -62,6 +55,15 @@
   loop:
     - { number: 1, start: "0%", end: "{{ partition_size_gb }}GB" }
     - { number: 2, start: "{{ partition_size_gb }}GB", end: "100%" }
+  when: 
+    - partition_strategy == 'create_partition'
+    - pv_strategy == 'create_new_pv'
+
+- name: Wait for partition devices
+  ansible.builtin.wait_for:
+    path: "/dev/{{ selected_disk_name }}{{ item }}"
+    timeout: 30
+  loop: [1, 2]
   when: 
     - partition_strategy == 'create_partition'
     - pv_strategy == 'create_new_pv'
