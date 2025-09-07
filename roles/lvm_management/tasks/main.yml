@@ -37,7 +37,7 @@
       {%- if pv_strategy == 'use_existing_pv' -%}
         {{ existing_pv_device if existing_pv_device != '' else '/dev/' + selected_disk_name }}
       {%- elif partition_strategy == 'create_partition' -%}
-        {{ '/dev/' + selected_disk_name + '2' }}
+        {{ '/dev/' + selected_disk_name + '1' }}
       {%- else -%}
         {{ '/dev/' + selected_disk_name }}
       {%- endif -%}
