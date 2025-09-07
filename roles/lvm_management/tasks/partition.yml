@@ -237,7 +237,15 @@
   when: 
     - partition_strategy == 'create_partition'
 
-- name: Create secondary partition (remaining space)
+- name: Debug partition strategy and conditions
+  ansible.builtin.debug:
+    msg: |
+      Checking conditions for secondary partition:
+      - partition_strategy: {{ partition_strategy }}
+      - partition_strategy == 'create_partition': {{ partition_strategy == 'create_partition' }}
+      - This should execute secondary partition task: {{ partition_strategy == 'create_partition' }}
+
+- name: Create secondary partition (remaining space) - FORCED
   community.general.parted:
     device: "{{ base_disk }}"
     number: 2
@@ -246,18 +254,43 @@
     part_type: primary
     state: present
   register: secondary_partition_result
+  failed_when: false  # ไม่ให้ fail ถ้ามีปัญหา
   when: 
     - partition_strategy == 'create_partition'
 
-# เพิ่ม debug 
-- name: Debug secondary partition creation
+- name: Debug secondary partition result (detailed)
   ansible.builtin.debug:
     msg: |
-      Secondary partition task status:
-      - Executed: {{ secondary_partition_result is defined and not secondary_partition_result.skipped | default(false) }}
+      Secondary partition creation attempt:
+      - Task executed: {{ secondary_partition_result is defined }}
+      - Skipped: {{ secondary_partition_result.skipped | default(false) }}
       - Changed: {{ secondary_partition_result.changed | default(false) }}
-      - Error: {{ secondary_partition_result.stderr | default('none') }}
-  when: partition_strategy == 'create_partition'
+      - Failed: {{ secondary_partition_result.failed | default(false) }}
+      - Stdout: {{ secondary_partition_result.stdout | default('none') }}
+      - Stderr: {{ secondary_partition_result.stderr | default('none') }}
+      - Full result: {{ secondary_partition_result }}
+
+# เพิ่ม debug 
+- name: Create secondary partition using shell (fallback)
+  ansible.builtin.shell: |
+    parted "{{ base_disk }}" print || echo "Partition table check"
+    echo "Creating partition 2 from {{ partition_size_gb }}GB to 100%"
+    parted "{{ base_disk }}" mkpart primary "{{ partition_size_gb }}GB" 100% || echo "Partition may already exist"
+    partprobe "{{ base_disk }}"
+    sleep 2
+    lsblk "{{ base_disk }}"
+  register: shell_partition_result
+  when: 
+    - partition_strategy == 'create_partition'
+    - secondary_partition_result is defined
+    - not secondary_partition_result.changed | default(false)
+
+- name: Debug shell partition result
+  ansible.builtin.debug:
+    msg: |
+      Shell partition creation result:
+      {{ shell_partition_result.stdout | default('not executed') }}
+  when: shell_partition_result is defined
 
 - name: Wait for partition devices to appear
   ansible.builtin.wait_for:
