@@ -124,6 +124,42 @@
     - existing_partition_check is defined
     - existing_partition_check.stdout == 'no_partition'
 
+# เพิ่มหลัง task "Create partitions using parted":
+- name: Force create secondary partition if missing
+  ansible.builtin.shell: |
+    disk="{{ base_disk }}"
+    
+    # Check if secondary partition exists
+    if ! ls "${disk}2" >/dev/null 2>&1; then
+      echo "Secondary partition missing, creating..."
+      
+      # Get primary partition end
+      primary_end=$(parted "$disk" unit s print | grep "^ 1" | awk '{print $3}' | sed 's/s//')
+      total_sectors=$(parted "$disk" unit s print | grep "^Disk" | awk '{print $3}' | sed 's/s//')
+      
+      # Calculate secondary start (primary_end + 1)
+      secondary_start=$((primary_end + 1))
+      secondary_end=$((total_sectors - 34))  # Reserve 34 sectors for GPT
+      
+      echo "Creating secondary: ${secondary_start}s to ${secondary_end}s"
+      parted "$disk" --script mkpart primary "${secondary_start}s" "${secondary_end}s"
+      
+      sleep 2
+      partprobe "$disk"
+      
+      if ls "${disk}2" >/dev/null 2>&1; then
+        echo "SUCCESS: Secondary partition created"
+      else
+        echo "FAILED: Cannot create secondary partition"
+      fi
+    else
+      echo "Secondary partition already exists"
+    fi
+    
+    lsblk "$disk"
+  when: partition_strategy == 'create_partition'
+  register: secondary_creation_fix
+  
 - name: Get created partition devices
   ansible.builtin.shell: |
     disk="{{ base_disk }}"
