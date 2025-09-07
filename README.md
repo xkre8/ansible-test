@@ -359,3 +359,64 @@ spec:
         fstype: xfs
 
 ```
+
+Physical Volume Strategy
+create_new_pv
+
+Disk Name (for new PV)
+sdc
+
+Partition Options
+create_partition
+
+Size in GB for new partition
+5
+
+Existing PV Device
+""
+Volume Group Strategy 
+create_new
+
+Volume Group Name
+vg_data
+
+Filesystem Configuration
+  - path: "/shared"
+    lv_name: "shared_lv"  
+    size_mb: 2048
+    fstype: "ext4"
+
+ได้ output 
+
+lsblk
+NAME                MAJ:MIN RM  SIZE RO TYPE MOUNTPOINTS
+sda                   8:0    0   64G  0 disk 
+├─sda1                8:1    0  500M  0 part /boot/efi
+├─sda2                8:2    0    1G  0 part /boot
+├─sda3                8:3    0    2M  0 part 
+└─sda4                8:4    0 62.5G  0 part 
+  ├─rootvg-homelv   253:0    0    1G  0 lvm  /home
+  ├─rootvg-rootlv   253:1    0    2G  0 lvm  /
+  ├─rootvg-tmplv    253:2    0    2G  0 lvm  /tmp
+  ├─rootvg-usrlv    253:3    0   10G  0 lvm  /usr
+  └─rootvg-varlv    253:4    0   10G  0 lvm  /var
+sdb                   8:16   0    8G  0 disk 
+└─sdb1                8:17   0    8G  0 part /mnt
+sdc                   8:32   0   10G  0 disk 
+└─vg_data-shared_lv 253:5    0    2G  0 lvm  /shared
+sdd                   8:48   0   10G  0 disk 
+sr0                  11:0    1  636K  0 rom  
+
+
+/dev/sdd (10GB disk)
+│
+├── /dev/sdd1 (4.7GB) ────┐
+│                        │ 
+│                        ├─ PV for LVM
+│                        │
+│                        ├─ VG: vg_test (4.7GB)
+│                        │   │
+│                        │   └─ LV: test_lv (2GB) → /test
+│                        │   └─ Free space: 2.7GB
+│
+└── /dev/sdd2 (5.3GB) ───── Available (not used by LVM)
