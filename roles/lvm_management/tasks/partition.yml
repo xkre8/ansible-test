@@ -71,7 +71,7 @@
     
     # Create secondary partition (remaining space)  
     echo "Creating secondary partition: remaining space"
-    parted "$disk" --script mkpart primary ext4 "${primary_size}GB" "${disk_size_gb}GB"
+    parted "$disk" --script mkpart primary ext4 "${primary_size}GB" "100%"
     
     # Alternative approach - use sectors instead of GB
     # parted "$disk" --script mkpart primary 2048s "$((primary_size * 1024 * 1024 * 2))s"
