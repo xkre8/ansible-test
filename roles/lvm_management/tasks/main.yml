@@ -43,7 +43,7 @@
       {%- endif -%}
 
 # === CREATE PARTITIONS ===
-- name: Create GPT partition table
+- name: Create GPT partition table (only)
   community.general.parted:
     device: "/dev/{{ selected_disk_name }}"
     label: gpt
@@ -52,35 +52,16 @@
     - partition_strategy == 'create_partition'
     - pv_strategy == 'create_new_pv'
 
-- name: Create primary partition
+- name: Create both partitions
   community.general.parted:
     device: "/dev/{{ selected_disk_name }}"
-    number: 1
-    part_start: 0%
-    part_end: "{{ partition_size_gb }}GB"
-    part_type: primary
+    number: "{{ item.number }}"
+    part_start: "{{ item.start }}"
+    part_end: "{{ item.end }}"
     state: present
-  when: 
-    - partition_strategy == 'create_partition'
-    - pv_strategy == 'create_new_pv'
-
-- name: Create secondary partition (remaining space)
-  community.general.parted:
-    device: "/dev/{{ selected_disk_name }}"
-    number: 2
-    part_start: "{{ partition_size_gb }}GB"
-    part_end: 100%
-    part_type: primary
-    state: present
-  when: 
-    - partition_strategy == 'create_partition'
-    - pv_strategy == 'create_new_pv'
-
-- name: Wait for partition devices
-  ansible.builtin.wait_for:
-    path: "/dev/{{ selected_disk_name }}{{ item }}"
-    timeout: 30
-  loop: [1, 2]
+  loop:
+    - { number: 1, start: "0%", end: "{{ partition_size_gb }}GB" }
+    - { number: 2, start: "{{ partition_size_gb }}GB", end: "100%" }
   when: 
     - partition_strategy == 'create_partition'
     - pv_strategy == 'create_new_pv'
