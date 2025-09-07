@@ -37,12 +37,11 @@
       {%- if pv_strategy == 'use_existing_pv' -%}
         {{ existing_pv_device if existing_pv_device != '' else '/dev/' + selected_disk_name }}
       {%- elif partition_strategy == 'create_partition' -%}
-        {{ '/dev/' + selected_disk_name + '1' }}
+        {{ '/dev/' + selected_disk_name + '2' }}
       {%- else -%}
         {{ '/dev/' + selected_disk_name }}
       {%- endif -%}
 
-# === CREATE PARTITIONS ===
 # === CREATE PARTITIONS ===
 - name: Create both partitions
   community.general.parted:
@@ -68,23 +67,25 @@
     - partition_strategy == 'create_partition'
     - pv_strategy == 'create_new_pv'
 
-# === CREATE PV ===
-- name: Create PV
-  community.general.lvg:
-    vg: "{{ volume_group_name }}"
-    pvs: "{{ target_device }}"
-    state: present
-  register: pv_result
-  when: 
-    - pv_strategy == 'create_new_pv'
+# # === CREATE PV ===
+# - name: Create PV
+#   community.general.lvg:
+#     vg: "{{ volume_group_name }}"
+#     pvs: "{{ target_device }}"
+#     state: present
+#   register: pv_result
+#   when: 
+#     - pv_strategy == 'create_new_pv'
 
-# === CREATE VG ===
+# === CREATE pv VG  ===
 - name: Create/Extend VG
   community.general.lvg:
     vg: "{{ volume_group_name }}"
     pvs: "{{ target_device }}"
     state: present
-  when: vg_strategy in ['create_new', 'extend_existing']
+  when: 
+    - pv_strategy == 'create_new_pv'
+    - vg_strategy in ['create_new', 'extend_existing']
 
 # === SIZE VALIDATION ===
 - name: Get VG information
