@@ -43,7 +43,7 @@
       Planned: {{ partition_size_gb }}GB primary + remaining secondary
   when: existing_partition_check is defined
 
-- name: Create dual partitions (Primary + Secondary)
+- name: Create partitions using parted (Primary + Remaining)
   ansible.builtin.shell: |
     disk="{{ base_disk }}"
     primary_size="{{ partition_size_gb }}"
@@ -57,239 +57,124 @@
     wipefs -a "$disk" 2>/dev/null || true
     parted "$disk" --script mklabel gpt
     
-    # Create primary partition
+    # Create primary partition (specified size)
     echo "Creating primary partition: ${primary_size}GB"
     parted "$disk" --script mkpart primary 0% "${primary_size}GB"
     
-    # Create secondary partition using remaining space
+    # Create secondary partition (remaining space)  
     echo "Creating secondary partition: remaining space"
     parted "$disk" --script mkpart primary "${primary_size}GB" 100%
     
     # Wait and refresh
     sleep 3
     partprobe "$disk" 2>/dev/null || true
-    udevadm settle 2>/dev/null || sleep 2
     
-    echo "=== INITIAL VERIFICATION ==="
+    echo "=== VERIFICATION ==="
     lsblk "$disk"
-    echo ""
     
-    # Check partition count
-    partition_count=$(lsblk "$disk" -o TYPE -n | grep -c "part" 2>/dev/null || echo "0")
-    echo "Partition count after creation: $partition_count"
-    
-    if [ "$partition_count" = "2" ]; then
-      primary_info=$(lsblk "$disk" -o NAME,SIZE -n | sed -n '2p' | awk '{print $1 " (" $2 ")"}')
-      secondary_info=$(lsblk "$disk" -o NAME,SIZE -n | sed -n '3p' | awk '{print $1 " (" $2 ")"}')
-      echo "SUCCESS: Created 2 partitions"
-      echo "Primary partition: $primary_info"
-      echo "Secondary partition: $secondary_info"
-      
-    elif [ "$partition_count" = "1" ]; then
-      primary_info=$(lsblk "$disk" -o NAME,SIZE -n | sed -n '2p' | awk '{print $1 " (" $2 ")"}')
-      echo "WARNING: Only 1 partition created: $primary_info"
-      echo "Attempting to create secondary partition..."
-      
-      # Get primary partition end in sectors
-      primary_end=$(parted "$disk" unit s print | grep "^ 1" | awk '{print $3}' | sed 's/s//')
-      total_sectors=$(parted "$disk" unit s print | grep "^Disk" | awk '{print $3}' | sed 's/s//')
-      
-      if [ -n "$primary_end" ] && [ -n "$total_sectors" ]; then
-        secondary_start=$((primary_end + 1))
-        secondary_end=$((total_sectors - 34))  # Reserve 34 sectors for GPT
-        
-        echo "Primary ends at sector: $primary_end"
-        echo "Creating secondary: ${secondary_start}s to ${secondary_end}s"
-        
-        parted "$disk" --script mkpart primary "${secondary_start}s" "${secondary_end}s"
-        sleep 2
-        partprobe "$disk" 2>/dev/null || true
-        udevadm settle 2>/dev/null || sleep 2
-        
-        # Recheck
-        new_count=$(lsblk "$disk" -o TYPE -n | grep -c "part" 2>/dev/null || echo "0")
-        if [ "$new_count" = "2" ]; then
-          echo "SUCCESS: Secondary partition created"
-        else
-          echo "ERROR: Failed to create secondary partition"
-          echo "Trying alternative method..."
-          
-          # Alternative: Use percentage
-          parted "$disk" --script mkpart primary "${primary_size}GB" 100%
-          sleep 2
-          partprobe "$disk" 2>/dev/null || true
-          
-          final_count=$(lsblk "$disk" -o TYPE -n | grep -c "part" 2>/dev/null || echo "0")
-          if [ "$final_count" = "2" ]; then
-            echo "SUCCESS: Secondary partition created (alternative method)"
-          else
-            echo "ERROR: All methods failed to create secondary partition"
-          fi
-        fi
-      else
-        echo "ERROR: Could not determine partition boundaries"
-      fi
-      
+    # Verify partitions were created
+    partition_count=$(lsblk "$disk" -o TYPE -n | grep -c "part" || echo "0")
+    if [ "$partition_count" -ge "2" ]; then
+      echo "SUCCESS: Created $partition_count partitions"
+      echo "Primary partition: $(lsblk "$disk" -o NAME -n | sed -n '2p' | tr -d '├─└│ ')"
+      echo "Secondary partition: $(lsblk "$disk" -o NAME -n | sed -n '3p' | tr -d '├─└│ ')"
     else
-      echo "ERROR: No partitions were created!"
-      echo "Disk may be in use or have issues"
-      lsblk "$disk"
+      echo "ERROR: Failed to create both partitions! Only $partition_count found"
       exit 1
     fi
-    
-    echo "=== FINAL VERIFICATION ==="
-    lsblk "$disk"
-    echo ""
-    parted "$disk" print
-    
-    # Final partition count
-    final_partition_count=$(lsblk "$disk" -o TYPE -n | grep -c "part" 2>/dev/null || echo "0")
-    echo "Final partition count: $final_partition_count"
-    
-    if [ "$final_partition_count" -ge "2" ]; then
-      echo "RESULT: SUCCESS - Dual partition layout created"
-    elif [ "$final_partition_count" = "1" ]; then
-      echo "RESULT: PARTIAL - Only primary partition created"
-    else
-      echo "RESULT: FAILED - No partitions created"
-      exit 1
-    fi
-  register: partition_creation_result
+  register: dual_partition_creation
   when: 
     - partition_strategy == 'create_partition'
     - existing_partition_check is defined
     - existing_partition_check.stdout == 'no_partition'
 
-- name: Ensure both partitions exist
+- name: Get created partition devices
   ansible.builtin.shell: |
     disk="{{ base_disk }}"
     
-    echo "=== PARTITION EXISTENCE CHECK ==="
+    # Get partition list (exclude disk name)
+    partitions=$(lsblk "$disk" -o NAME -n | grep -v "$(basename $disk)" | tr -d '├─└│ ')
     
-    # Wait for device files
-    sleep 3
-    
-    # Check current partition count
-    current_count=$(lsblk "$disk" -o TYPE -n | grep -c "part" 2>/dev/null || echo "0")
-    echo "Current partition count: $current_count"
-    
-    # List current partitions
-    if [ "$current_count" -gt "0" ]; then
-      echo "Existing partitions:"
-      lsblk "$disk" -o NAME,SIZE,TYPE
-    fi
-    
-    # Check specific device files
-    primary_exists="no"
-    secondary_exists="no"
-    
-    if [ -b "${disk}1" ]; then
-      primary_exists="yes"
-      echo "Primary partition ${disk}1: EXISTS"
-    else
-      echo "Primary partition ${disk}1: MISSING"
-    fi
-    
-    if [ -b "${disk}2" ]; then
-      secondary_exists="yes"  
-      echo "Secondary partition ${disk}2: EXISTS"
-    else
-      echo "Secondary partition ${disk}2: MISSING"
-    fi
-    
-    echo "PRIMARY_EXISTS:$primary_exists"
-    echo "SECONDARY_EXISTS:$secondary_exists"
-    echo "PARTITION_COUNT:$current_count"
-    
-    # Get partition information for later use
-    if [ "$current_count" -gt "0" ]; then
-      partitions=$(lsblk "$disk" -o NAME -n | grep -v "$(basename $disk)" | tr -d '├─└│ ')
+    if [ -n "$partitions" ]; then
       primary_partition=$(echo "$partitions" | sed -n '1p')
       secondary_partition=$(echo "$partitions" | sed -n '2p')
       
-      if [ -n "$primary_partition" ]; then
-        echo "PRIMARY_DEVICE:/dev/$primary_partition"
-      fi
-      
-      if [ -n "$secondary_partition" ]; then
-        echo "SECONDARY_DEVICE:/dev/$secondary_partition"
-      fi
+      echo "PRIMARY:/dev/${primary_partition}"
+      echo "SECONDARY:/dev/${secondary_partition}"
+    else
+      echo "PRIMARY:{{ base_disk }}"
+      echo "SECONDARY:"
     fi
-  register: partition_check_result
+  register: created_partitions
   changed_when: false
   when: partition_strategy == 'create_partition'
 
-- name: Set partition device facts
+- name: Set primary partition as target device
   ansible.builtin.set_fact:
-    primary_partition_device: "{{ (partition_check_result.stdout_lines | select('match', '^PRIMARY_DEVICE:') | first).split(':')[1] if partition_check_result is defined and (partition_check_result.stdout_lines | select('match', '^PRIMARY_DEVICE:') | list | length > 0) else base_disk + '1' }}"
-    secondary_partition_device: "{{ (partition_check_result.stdout_lines | select('match', '^SECONDARY_DEVICE:') | first).split(':')[1] if partition_check_result is defined and (partition_check_result.stdout_lines | select('match', '^SECONDARY_DEVICE:') | list | length > 0) else base_disk + '2' }}"
-    partition_count: "{{ (partition_check_result.stdout_lines | select('match', '^PARTITION_COUNT:') | first).split(':')[1] | int if partition_check_result is defined else 0 }}"
+    target_device: "{{ (created_partitions.stdout_lines | select('match', '^PRIMARY:') | first).split(':')[1] if created_partitions is defined else base_disk }}"
+    secondary_partition: "{{ (created_partitions.stdout_lines | select('match', '^SECONDARY:') | first).split(':')[1] if created_partitions is defined and (created_partitions.stdout_lines | select('match', '^SECONDARY:') | first).split(':')[1] != '' else '' }}"
   when: 
     - partition_strategy == 'create_partition'
     - base_disk is defined
 
-- name: Set target device for LVM (primary partition)
+- name: Force set target device for create_partition strategy
   ansible.builtin.set_fact:
-    target_device: "{{ primary_partition_device }}"
-    secondary_partition: "{{ secondary_partition_device }}"
+    target_device: "/dev/{{ selected_disk_name }}1"
+    secondary_partition: "/dev/{{ selected_disk_name }}2"
   when: 
     - partition_strategy == 'create_partition'
-    - primary_partition_device is defined
+    - selected_disk_name is defined
+    - selected_disk_name != ""
 
-- name: Display partition creation summary
+- name: Verify target device is set correctly
   ansible.builtin.debug:
     msg: |
-      ============================================
-      PARTITION CREATION SUMMARY
-      ============================================
-      
-      Strategy: {{ partition_strategy }}
+      DUAL PARTITION RESULT:
+      - Strategy: {{ partition_strategy }}
+      - Base disk: {{ base_disk }}
+      - Primary partition (LVM): {{ target_device }}
+      - Secondary partition (Available): {{ secondary_partition }}
+      - Expected primary: /dev/{{ selected_disk_name }}1
+      - Expected secondary: /dev/{{ selected_disk_name }}2
+      - Primary match: {{ target_device == '/dev/' + selected_disk_name + '1' }}
+
+- name: Display partition result
+  ansible.builtin.debug:
+    msg: |
+      Partition Strategy: {{ partition_strategy }}
       Base disk: {{ base_disk | default('undefined') }}
-      Requested primary size: {{ partition_size_gb }}GB
+      
+      {% if partition_strategy == 'create_partition' %}
+      === DUAL PARTITION CREATION ===
+      Primary partition: {{ target_device | default('undefined') }} ({{ partition_size_gb }}GB)
+      Secondary partition: {{ secondary_partition | default('not created') }} (remaining space)
       
       {% if existing_partition_check is defined %}
-      Pre-check result: {{ existing_partition_check.stdout }}
+      Partition check: {{ existing_partition_check.stdout }}
       {% endif %}
       
-      {% if partition_creation_result is defined %}
-      Creation executed: Yes
-      {% if partition_creation_result.rc == 0 %}
-      Creation status: SUCCESS
+      {% if dual_partition_creation is defined and dual_partition_creation.stdout is defined %}
+      Partition creation output:
+      {{ dual_partition_creation.stdout }}
+      {% elif dual_partition_creation is defined and dual_partition_creation.skipped is defined %}
+      Partition creation: SKIPPED ({{ dual_partition_creation.skip_reason | default('condition not met') }})
       {% else %}
-      Creation status: FAILED (rc={{ partition_creation_result.rc }})
+      Partition creation: NOT EXECUTED (existing partitions found or condition not met)
       {% endif %}
+      
+      {% if created_partitions is defined and created_partitions.stdout is defined %}
+      Detected partitions:
+      {{ created_partitions.stdout }}
       {% else %}
-      Creation executed: No (skipped due to existing partitions)
+      Partition detection: FAILED - using fallback
       {% endif %}
       
-      FINAL RESULTS:
-      - Primary partition: {{ primary_partition_device | default('not determined') }}
-      - Secondary partition: {{ secondary_partition_device | default('not determined') }}
-      - Partition count: {{ partition_count | default(0) }}
-      - LVM target device: {{ target_device | default('not set') }}
+      STATUS:
+      - Primary partition ready for PV: {{ target_device is defined and target_device != '' }}
+      - Secondary partition available: {{ secondary_partition != '' }}
+      - Both partitions created: {{ target_device is defined and secondary_partition != '' }}
       
-      VERIFICATION STATUS:
-      - Primary exists: {{ primary_partition_device != (base_disk + '1') if primary_partition_device is defined else 'unknown' }}
-      - Secondary exists: {{ secondary_partition_device != (base_disk + '2') if secondary_partition_device is defined else 'unknown' }}
-      - Ready for LVM: {{ target_device is defined and target_device != '' }}
-      
-      {% if partition_creation_result is defined and partition_creation_result.stdout is defined %}
-      ============================================
-      DETAILED OUTPUT:
-      {{ partition_creation_result.stdout }}
-      {% endif %}
-      
-      ============================================
-  when: partition_strategy == 'create_partition'
-
-- name: Display whole disk strategy summary
-  ansible.builtin.debug:
-    msg: |
-      ============================================
-      WHOLE DISK STRATEGY
-      ============================================
-      Using entire disk: {{ base_disk | default('undefined') }}
+      {% else %}
+      Strategy: Using whole disk (no partition creation)
       Target device: {{ base_disk | default('undefined') }}
-      No partitioning required.
-      ============================================
-  when: partition_strategy == 'use_whole_disk'
+      {% endif %}
