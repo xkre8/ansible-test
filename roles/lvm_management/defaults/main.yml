@@ -7,13 +7,17 @@ partition_strategy: "use_whole_disk"  # use_whole_disk, create_partition
 split_disk: false                     # true/false - split disk into 2 partitions
 partition_size_gb: 10                 # Size for first partition (when split_disk=true)
 
+# === SECONDARY PARTITION CONTROL ===
+split_disk_secondary: false          # true/false - create filesystem on 2nd partition or just VG
+create_secondary_filesystem: false    # DEPRECATED - use split_disk_secondary instead
+
 # === VOLUME GROUP CONFIGURATION ===
 volume_group_name: ""                 # Primary VG name
 volume_group2_name: ""                # Secondary VG name (when split_disk=true)
 
 # === FILESYSTEM CONFIGURATION ===
 filesystem_config: []                 # Primary VG filesystems
-filesystem_config2: []                # Secondary VG filesystems (when split_disk=true)
+filesystem_config2: []                # Secondary VG filesystems (when split_disk_secondary=true)
 
 # === SYSTEM SETTINGS ===
 lvm_debug: true
