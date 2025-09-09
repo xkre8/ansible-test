@@ -10,7 +10,7 @@
 
 - name: "🔧 PHASE 2: Partition Creation"
   ansible.builtin.include_tasks: create_partition.yml
-  when: partition_strategy == 'create_partition' or not split_disk
+  when: partition_strategy == 'create_partition'
 
 - name: "📦 PHASE 3: Volume Group Creation"
   ansible.builtin.include_tasks: create_vg.yml

@@ -39,7 +39,9 @@
     that:
       - "{{ total_fs_size_mb }} <= {{ primary_vg_info.stdout.split()[1] | int }}"
     fail_msg: "Insufficient space in {{ volume_group_name }}. Required: {{ total_fs_size_mb }}MB, Available: {{ primary_vg_info.stdout.split()[1] }}MB"
-  when: primary_fs_dirs | length > 0
+  when: 
+    - primary_fs_dirs | length > 0
+    - primary_vg_info is defined
 
 - name: Validate secondary VG has enough space
   ansible.builtin.assert:
@@ -49,6 +51,7 @@
   when: 
     - split_disk
     - secondary_fs_dirs | length > 0
+    - secondary_vg_info is defined
 
 # === CREATE LOGICAL VOLUMES ===
 - name: Create logical volumes (primary VG)

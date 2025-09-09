@@ -17,25 +17,24 @@
       {% endif %}
 
 # === CREATE PARTITIONS ===
-- name: Create GPT partition table
-  community.general.parted:
-    device: "{{ base_disk }}"
-    label: gpt
-    state: present
+- name: Create GPT partition table and clear existing data
+  ansible.builtin.shell: |
+    wipefs -a {{ base_disk }} 2>/dev/null || true
+    parted {{ base_disk }} --script mklabel gpt
   when: partition_strategy == 'create_partition'
 
 - name: Create single partition (whole disk)
   community.general.parted:
     device: "{{ base_disk }}"
     number: 1
-    part_start: 0%
+    part_start: 1MiB
     part_end: 100%
     state: present
   when: 
     - partition_strategy == 'create_partition'
     - not split_disk
 
-- name: Create dual partitions (split disk)
+- name: Create dual partitions (split disk) - Fixed sizing
   community.general.parted:
     device: "{{ base_disk }}"
     number: "{{ item.number }}"
@@ -43,8 +42,8 @@
     part_end: "{{ item.end }}"
     state: present
   loop:
-    - { number: 1, start: "0%", end: "{{ partition_size_gb }}GB" }
-    - { number: 2, start: "{{ partition_size_gb }}GB", end: "100%" }
+    - { number: 1, start: "1MiB", end: "{{ partition_size_gb }}GiB" }
+    - { number: 2, start: "{{ partition_size_gb }}GiB", end: "100%" }
   when: 
     - partition_strategy == 'create_partition'
     - split_disk

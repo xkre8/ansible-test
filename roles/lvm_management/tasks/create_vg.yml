@@ -29,13 +29,19 @@
     pvs: "{{ secondary_device }}"
     state: present
   register: secondary_vg_result
-  when: split_disk
+  when: 
+    - split_disk
+    - secondary_device != ""
+    - volume_group2_name != ""
 
 - name: Get secondary VG information
   ansible.builtin.command: vgs {{ volume_group2_name }} --units m --noheadings -o vg_size,vg_free --nosuffix
   register: secondary_vg_info
   changed_when: false
-  when: split_disk
+  when: 
+    - split_disk
+    - secondary_device != ""
+    - volume_group2_name != ""
 
 # === DISPLAY VG CREATION RESULTS ===
 - name: Display VG creation results
