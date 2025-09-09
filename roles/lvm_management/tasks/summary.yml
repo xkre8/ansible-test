@@ -1,33 +1,88 @@
 ---
-- name: Get LVM information
+# === COLLECT FINAL INFORMATION ===
+- name: Get final LVM information
   ansible.builtin.shell: |
     echo "=== VOLUME GROUPS ==="
-    vgs "{{ volume_group_name }}" 2>/dev/null || echo "VG not found"
+    vgs {{ volume_group_name }} {{ volume_group2_name if split_disk else '' }} 2>/dev/null || echo "VG info unavailable"
     echo ""
     echo "=== LOGICAL VOLUMES ==="
-    lvs "{{ volume_group_name }}" 2>/dev/null || echo "No LVs found"
+    lvs {{ volume_group_name }} {{ volume_group2_name if split_disk else '' }} 2>/dev/null || echo "LV info unavailable"
     echo ""
-    {% if filesystem_dirs | length > 0 %}
-    echo "=== MOUNT POINTS ==="
-    df -h {{ filesystem_dirs | map(attribute='path') | join(' ') }} 2>/dev/null || echo "Mount info unavailable"
-    {% else %}
-    echo "=== NO FILESYSTEMS CONFIGURED ==="
+    echo "=== MOUNTED FILESYSTEMS ==="
+    {% set all_paths = [] %}
+    {% if primary_fs_dirs is defined %}
+      {% for item in primary_fs_dirs %}
+        {% set _ = all_paths.append(item.path) %}
+      {% endfor %}
     {% endif %}
-  register: lvm_info
+    {% if split_disk and secondary_fs_dirs is defined %}
+      {% for item in secondary_fs_dirs %}
+        {% set _ = all_paths.append(item.path) %}
+      {% endfor %}
+    {% endif %}
+    {% if all_paths | length > 0 %}
+    df -h {{ all_paths | join(' ') }} 2>/dev/null || echo "Mount info unavailable"
+    {% else %}
+    echo "No filesystems configured"
+    {% endif %}
+  register: final_lvm_info
   changed_when: false
-  failed_when: false
 
-- name: Display LVM summary
+# === DISPLAY COMPREHENSIVE SUMMARY ===
+- name: Display comprehensive summary
   ansible.builtin.debug:
     msg: |
       
-      🎯 LVM Setup Complete!
-      Strategy: {{ vg_strategy | upper }}
-      Volume Group: {{ volume_group_name }}
-      {% if filesystem_dirs | length > 0 %}
-      Filesystems Created: {{ filesystem_dirs | length }}
-      {% else %}
-      Filesystems Created: 0 (VG only)
+      🎉 LVM INFRASTRUCTURE SETUP COMPLETE! 🎉
+      
+      ════════════════════════════════════════════════════════════
+      📊 CONFIGURATION SUMMARY
+      ════════════════════════════════════════════════════════════
+      
+      🔧 Strategy: CREATE NEW
+      📀 Target Disk: {{ base_disk }} ({{ disk_size_gb }}GB)
+      📊 Partition Strategy: {{ partition_strategy }}
+      🔀 Split Disk: {{ 'YES' if split_disk else 'NO' }}
+      
+      ════════════════════════════════════════════════════════════
+      📦 VOLUME GROUPS CREATED
+      ════════════════════════════════════════════════════════════
+      
+      🏷️  Primary VG: {{ volume_group_name }}
+         📍 Device: {{ primary_device }}
+         💾 Filesystems: {{ primary_fs_dirs | length if primary_fs_dirs is defined else 0 }}
+      
+      {% if split_disk %}
+      🏷️  Secondary VG: {{ volume_group2_name }}
+         📍 Device: {{ secondary_device }}
+         💾 Filesystems: {{ secondary_fs_dirs | length if secondary_fs_dirs is defined else 0 }}
       {% endif %}
       
-      {{ lvm_info.stdout }}
+      ════════════════════════════════════════════════════════════
+      💾 FILESYSTEMS CREATED
+      ════════════════════════════════════════════════════════════
+      
+      {% if primary_fs_dirs is defined %}
+      🗂️  Primary VG ({{ volume_group_name }}):
+      {% for fs in primary_fs_dirs %}
+         📁 {{ fs.path }} ({{ fs.size_mb }}MB, {{ fs.fstype }})
+      {% endfor %}
+      {% endif %}
+      
+      {% if split_disk and secondary_fs_dirs is defined %}
+      🗂️  Secondary VG ({{ volume_group2_name }}):
+      {% for fs in secondary_fs_dirs %}
+         📁 {{ fs.path }} ({{ fs.size_mb }}MB, {{ fs.fstype }})
+      {% endfor %}
+      {% endif %}
+      
+      ════════════════════════════════════════════════════════════
+      📈 SYSTEM INFORMATION
+      ════════════════════════════════════════════════════════════
+      
+      {{ final_lvm_info.stdout }}
+      
+      ════════════════════════════════════════════════════════════
+      ✅ STATUS: ALL OPERATIONS COMPLETED SUCCESSFULLY
+      🕐 Execution completed at: {{ ansible_date_time.iso8601 }}
+      ════════════════════════════════════════════════════════════

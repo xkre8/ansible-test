@@ -1,9 +1,11 @@
 ---
+# === BASIC VALIDATION ===
 - name: Check required variables
   ansible.builtin.fail:
     msg: "Missing required variable: {{ item }}"
   when: vars[item] is not defined or vars[item] == ""
   loop:
+    - selected_disk_name
     - volume_group_name
 
 - name: Validate partition strategy
@@ -11,49 +13,115 @@
     msg: "partition_strategy must be 'use_whole_disk' or 'create_partition'"
   when: partition_strategy not in ['use_whole_disk', 'create_partition']
 
-- name: Validate partition size
-  ansible.builtin.fail:
-    msg: "partition_size_gb must be between 1 and 1000 GB"
-  when: 
-    - partition_strategy == 'create_partition'
-    - (partition_size_gb | int) < 1 or (partition_size_gb | int) > 1000
+# === DISK VALIDATION ===
+- name: Set base disk path
+  ansible.builtin.set_fact:
+    base_disk: "/dev/{{ selected_disk_name }}"
 
-- name: Check device is specified when needed
-  ansible.builtin.fail:
-    msg: "Device required! Specify: selected_disk_name, manual_lvm_device, or existing_pv_device"
-  when:
-    - vg_strategy in ['create_new', 'extend_existing']
-    - selected_disk_name == ""
-    - manual_lvm_device == ""
-    - (existing_pv_device == "" or pv_strategy != 'use_existing_pv')
-
-- name: Validate base disk exists
+- name: Check disk exists
   ansible.builtin.stat:
     path: "{{ base_disk }}"
-  register: device_check
-  failed_when: not device_check.stat.exists
-  when: 
-    - base_disk is defined and base_disk != ""
-    - vg_strategy in ['create_new', 'extend_existing']
+  register: disk_check
+  failed_when: not disk_check.stat.exists
 
-- name: Check VG exists for use_existing strategy
-  ansible.builtin.command: vgs --noheadings "{{ volume_group_name }}"
-  register: vg_check
-  failed_when: vg_check.rc != 0
+- name: Get disk size information
+  ansible.builtin.shell: |
+    lsblk {{ base_disk }} -b -n -o SIZE | head -1
+  register: disk_size_bytes
   changed_when: false
-  when: vg_strategy == 'use_existing'
 
-- name: Validate filesystem configuration
+- name: Calculate disk size in GB
+  ansible.builtin.set_fact:
+    disk_size_gb: "{{ (disk_size_bytes.stdout | int / 1024 / 1024 / 1024) | round | int }}"
+
+# === PARTITION SIZE VALIDATION ===
+- name: Validate partition size for split disk
   ansible.builtin.fail:
     msg: |
-      Invalid filesystem config! Check:
-      - path, lv_name, size_mb are required
+      Partition size ({{ partition_size_gb }}GB) exceeds disk size ({{ disk_size_gb }}GB)
+      Available space: {{ disk_size_gb }}GB
+  when: 
+    - partition_strategy == 'create_partition'
+    - split_disk | bool
+    - (partition_size_gb | int) >= (disk_size_gb | int)
+
+# === VG NAME VALIDATION ===
+- name: Check primary VG doesn't exist
+  ansible.builtin.command: vgs --noheadings "{{ volume_group_name }}"
+  register: primary_vg_check
+  failed_when: primary_vg_check.rc == 0
+  changed_when: false
+
+- name: Check secondary VG doesn't exist
+  ansible.builtin.command: vgs --noheadings "{{ volume_group2_name }}"
+  register: secondary_vg_check
+  failed_when: secondary_vg_check.rc == 0
+  changed_when: false
+  when: 
+    - split_disk | bool
+    - volume_group2_name is defined 
+    - volume_group2_name != ""
+
+# === FILESYSTEM CONFIG VALIDATION ===
+- name: Parse filesystem configurations
+  ansible.builtin.set_fact:
+    parsed_fs_config: "{{ (filesystem_config | from_yaml) if filesystem_config else [] }}"
+    parsed_fs_config2: "{{ (filesystem_config2 | from_yaml) if filesystem_config2 and split_disk else [] }}"
+
+- name: Validate primary filesystem configuration
+  ansible.builtin.fail:
+    msg: |
+      Invalid filesystem config in filesystem_config:
+      Item {{ item_index }}: {{ item }}
+      - path, size_mb, fstype are required
       - size_mb must be positive number
       - fstype must be: xfs, ext4, ext3, ext2
   when: 
-    - filesystem_dirs | length > 0
-    - item.path is not defined or item.lv_name is not defined or 
-      item.size_mb is not defined or (item.size_mb | int) <= 0 or
-      (item.fstype is defined and item.fstype not in ['xfs', 'ext4', 'ext3', 'ext2'])
-  loop: "{{ filesystem_dirs }}"
+    - parsed_fs_config | length > 0
+    - item.path is not defined or item.size_mb is not defined or 
+      item.fstype is not defined or (item.size_mb | int) <= 0 or
+      item.fstype not in ['xfs', 'ext4', 'ext3', 'ext2']
+  loop: "{{ parsed_fs_config }}"
+  loop_control:
+    index_var: item_index
 
+- name: Validate secondary filesystem configuration
+  ansible.builtin.fail:
+    msg: |
+      Invalid filesystem config in filesystem_config2:
+      Item {{ item_index }}: {{ item }}
+      - path, size_mb, fstype are required
+      - size_mb must be positive number
+      - fstype must be: xfs, ext4, ext3, ext2
+  when: 
+    - split_disk | bool
+    - parsed_fs_config2 | length > 0
+    - item.path is not defined or item.size_mb is not defined or 
+      item.fstype is not defined or (item.size_mb | int) <= 0 or
+      item.fstype not in ['xfs', 'ext4', 'ext3', 'ext2']
+  loop: "{{ parsed_fs_config2 }}"
+  loop_control:
+    index_var: item_index
+
+- name: Calculate total filesystem sizes
+  ansible.builtin.set_fact:
+    total_fs_size_mb: "{{ parsed_fs_config | map(attribute='size_mb') | map('int') | sum }}"
+    total_fs2_size_mb: "{{ parsed_fs_config2 | map(attribute='size_mb') | map('int') | sum }}"
+
+- name: Display validation summary
+  ansible.builtin.debug:
+    msg: |
+      ✅ VALIDATION SUMMARY:
+      📀 Disk: {{ base_disk }} ({{ disk_size_gb }}GB)
+      🔧 Strategy: {{ partition_strategy }}
+      📊 Split disk: {{ split_disk }}
+      
+      {% if split_disk %}
+      📋 Partition 1: {{ partition_size_gb }}GB → VG: {{ volume_group_name }}
+      📋 Partition 2: {{ disk_size_gb - partition_size_gb }}GB → VG: {{ volume_group2_name | default('N/A') }}
+      💾 FS Config 1: {{ parsed_fs_config | length }} filesystems ({{ total_fs_size_mb }}MB)
+      💾 FS Config 2: {{ parsed_fs_config2 | length }} filesystems ({{ total_fs2_size_mb }}MB)
+      {% else %}
+      📋 Single setup: {{ disk_size_gb }}GB → VG: {{ volume_group_name }}
+      💾 FS Config: {{ parsed_fs_config | length }} filesystems ({{ total_fs_size_mb }}MB)
+      {% endif %}

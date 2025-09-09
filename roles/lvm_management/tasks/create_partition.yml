@@ -1,0 +1,96 @@
+---
+# === PARTITION CREATION (Create New Path) ===
+- name: Display partition plan
+  ansible.builtin.debug:
+    msg: |
+      🔧 PARTITION CREATION PLAN:
+      📀 Target disk: {{ base_disk }}
+      📊 Strategy: {{ 'Split into 2 partitions' if split_disk else 'Use whole disk or single partition' }}
+      
+      {% if partition_strategy == 'create_partition' and split_disk %}
+      📋 Partition 1: 0% → {{ partition_size_gb }}GB (for {{ volume_group_name }})
+      📋 Partition 2: {{ partition_size_gb }}GB → 100% (for {{ volume_group2_name }})
+      {% elif partition_strategy == 'create_partition' %}
+      📋 Single partition: 0% → 100% (for {{ volume_group_name }})
+      {% else %}
+      📋 Use whole disk (no partitioning)
+      {% endif %}
+
+# === CREATE PARTITIONS ===
+- name: Create GPT partition table
+  community.general.parted:
+    device: "{{ base_disk }}"
+    label: gpt
+    state: present
+  when: partition_strategy == 'create_partition'
+
+- name: Create single partition (whole disk)
+  community.general.parted:
+    device: "{{ base_disk }}"
+    number: 1
+    part_start: 0%
+    part_end: 100%
+    state: present
+  when: 
+    - partition_strategy == 'create_partition'
+    - not split_disk
+
+- name: Create dual partitions (split disk)
+  community.general.parted:
+    device: "{{ base_disk }}"
+    number: "{{ item.number }}"
+    part_start: "{{ item.start }}"
+    part_end: "{{ item.end }}"
+    state: present
+  loop:
+    - { number: 1, start: "0%", end: "{{ partition_size_gb }}GB" }
+    - { number: 2, start: "{{ partition_size_gb }}GB", end: "100%" }
+  when: 
+    - partition_strategy == 'create_partition'
+    - split_disk
+
+# === WAIT FOR DEVICES ===
+- name: Wait for partition devices (single)
+  ansible.builtin.wait_for:
+    path: "{{ base_disk }}1"
+    timeout: 30
+  when: 
+    - partition_strategy == 'create_partition'
+    - not split_disk
+
+- name: Wait for partition devices (dual)
+  ansible.builtin.wait_for:
+    path: "{{ base_disk }}{{ item }}"
+    timeout: 30
+  loop: [1, 2]
+  when: 
+    - partition_strategy == 'create_partition'
+    - split_disk
+
+# === SET TARGET DEVICES ===
+- name: Set target devices for VG creation
+  ansible.builtin.set_fact:
+    primary_device: >-
+      {%- if partition_strategy == 'create_partition' -%}
+        {{ base_disk }}1
+      {%- else -%}
+        {{ base_disk }}
+      {%- endif -%}
+    secondary_device: >-
+      {%- if partition_strategy == 'create_partition' and split_disk -%}
+        {{ base_disk }}2
+      {%- else -%}
+        ""
+      {%- endif -%}
+
+- name: Display partition results
+  ansible.builtin.debug:
+    msg: |
+      ✅ PARTITION CREATION COMPLETE:
+      🎯 Primary device: {{ primary_device }} → {{ volume_group_name }}
+      {% if split_disk %}
+      🎯 Secondary device: {{ secondary_device }} → {{ volume_group2_name }}
+      {% endif %}
+      
+      📊 Final layout:
+      {{ ansible_lsblk[selected_disk_name] | default('Device info not available') }}

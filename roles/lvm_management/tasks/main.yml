@@ -1,162 +1,23 @@
 ---
-- name: Install LVM packages
+# === MAIN ORCHESTRATOR ===
+- name: Install required packages
   ansible.builtin.package:
     name: [lvm2, xfsprogs, e2fsprogs, parted]
     state: present
 
-- name: Parse filesystem configuration
-  ansible.builtin.set_fact:
-    filesystem_dirs: "{{ (filesystem_config | from_yaml) if filesystem_config is defined else [] }}"
+- name: "🔍 PHASE 1: Validation"
+  ansible.builtin.include_tasks: validate.yml
 
-- name: Generate LV names
-  ansible.builtin.set_fact:
-    filesystem_dirs: "{{ processed_filesystems }}"
-  vars:
-    processed_filesystems: >-
-      {%- set result = [] -%}
-      {%- for item in filesystem_dirs -%}
-        {%- if item.lv_name is defined and item.lv_name != '' -%}
-          {%- set final_lv_name = item.lv_name | regex_replace('[^a-zA-Z0-9_-]', '_') -%}
-        {%- else -%}
-          {%- set final_lv_name = volume_group_name + '_' + (item.path | regex_replace('^/', '') | regex_replace('[^a-zA-Z0-9_-]', '_')) -%}
-        {%- endif -%}
-        {%- set _ = result.append(item | combine({'lv_name': final_lv_name})) -%}
-      {%- endfor -%}
-      {{ result }}
-  when: filesystem_dirs | length > 0
+- name: "🔧 PHASE 2: Partition Creation"
+  ansible.builtin.include_tasks: create_partition.yml
+  when: partition_strategy == 'create_partition' or not split_disk
 
-- name: Calculate total size
-  ansible.builtin.set_fact:
-    total_requested_mb: "{{ filesystem_dirs | map(attribute='size_mb') | map('int') | sum }}"
-  when: filesystem_dirs | length > 0
+- name: "📦 PHASE 3: Volume Group Creation"
+  ansible.builtin.include_tasks: create_vg.yml
 
-# === DEVICE SETUP ===
-- name: Set target device
-  ansible.builtin.set_fact:
-    target_device: >-
-      {%- if pv_strategy == 'use_existing_pv' -%}
-        {{ existing_pv_device if existing_pv_device != '' else '/dev/' + selected_disk_name }}
-      {%- elif partition_strategy == 'create_partition' -%}
-        {{ '/dev/' + selected_disk_name + '1' }}
-      {%- else -%}
-        {{ '/dev/' + selected_disk_name }}
-      {%- endif -%}
+- name: "💾 PHASE 4: Filesystem & LV Creation"
+  ansible.builtin.include_tasks: create_fs_lv.yml
+  when: parsed_fs_config | length > 0 or (split_disk and parsed_fs_config2 | length > 0)
 
-# === CREATE PARTITIONS ===
-- name: Create both partitions
-  community.general.parted:
-    device: "/dev/{{ selected_disk_name }}"
-    label: gpt
-    number: "{{ item.number }}"
-    part_start: "{{ item.start }}"
-    part_end: "{{ item.end }}"
-    state: present
-  loop:
-    - { number: 1, start: "0%", end: "{{ partition_size_gb }}GB" }
-    - { number: 2, start: "{{ partition_size_gb }}GB", end: "100%" }
-  when: 
-    - partition_strategy == 'create_partition'
-    - pv_strategy == 'create_new_pv'
-
-- name: Wait for partition devices
-  ansible.builtin.wait_for:
-    path: "/dev/{{ selected_disk_name }}{{ item }}"
-    timeout: 30
-  loop: [1, 2]
-  when: 
-    - partition_strategy == 'create_partition'
-    - pv_strategy == 'create_new_pv'
-
-# # === CREATE PV ===
-# - name: Create PV
-#   community.general.lvg:
-#     vg: "{{ volume_group_name }}"
-#     pvs: "{{ target_device }}"
-#     state: present
-#   register: pv_result
-#   when: 
-#     - pv_strategy == 'create_new_pv'
-
-# === CREATE pv VG  ===
-- name: Create/Extend VG
-  community.general.lvg:
-    vg: "{{ volume_group_name }}"
-    pvs: "{{ target_device }}"
-    state: present
-  when: 
-    - pv_strategy == 'create_new_pv'
-    - vg_strategy in ['create_new', 'extend_existing']
-
-
-# === SIZE VALIDATION ===
-- name: Get VG free space
-  ansible.builtin.command: vgs {{ volume_group_name }} --units m --noheadings -o vg_free --nosuffix
-  register: vg_free_mb
-  changed_when: false
-
-- name: Debug VG information
-  ansible.builtin.debug:
-    msg: |
-      VG: {{ volume_group_name }}
-      Available space: {{ vg_free_mb.stdout.strip() }}MB
-      Required space: {{ total_requested_mb }}MB
-      Target device: {{ target_device }}
-
-- name: Validate VG size
-  ansible.builtin.assert:
-    that:
-      - "{{ total_requested_mb | default(0) }} <= {{ vg_free_mb.stdout.strip() | int }}"
-    fail_msg: "Insufficient space in VG. Required: {{ total_requested_mb }}MB, Available: {{ vg_free_mb.stdout.strip() }}MB"
-  when: filesystem_dirs | length > 0
-
-# === CREATE LV & FILESYSTEM ===
-- name: Create LV
-  community.general.lvol:
-    vg: "{{ volume_group_name }}"
-    lv: "{{ item.lv_name }}"
-    size: "{{ item.size_mb }}M"
-    state: present
-  loop: "{{ filesystem_dirs }}"
-  when: filesystem_dirs | length > 0
-
-- name: Create filesystem
-  community.general.filesystem:
-    fstype: "{{ item.fstype }}"
-    dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
-    state: present
-  loop: "{{ filesystem_dirs }}"
-  when: filesystem_dirs | length > 0
-
-# === MOUNT ===
-- name: Create mount point
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: directory
-  loop: "{{ filesystem_dirs }}"
-  when: filesystem_dirs | length > 0
-
-- name: Mount filesystem
-  ansible.posix.mount:
-    path: "{{ item.path }}"
-    src: "/dev/mapper/{{ volume_group_name }}-{{ item.lv_name }}"
-    fstype: "{{ item.fstype }}"
-    opts: defaults
-    dump: >-
-      {%- if item.fstype == 'xfs' -%}
-      0
-      {%- elif item.fstype in ['ext4', 'ext3', 'ext2'] -%}
-      1
-      {%- else -%}
-      0
-      {%- endif -%}
-    passno: >-
-      {%- if item.fstype == 'xfs' -%}
-      0
-      {%- elif item.fstype in ['ext4', 'ext3', 'ext2'] -%}
-      2
-      {%- else -%}
-      0
-      {%- endif -%}
-    state: mounted
-  loop: "{{ filesystem_dirs }}"
-  when: filesystem_dirs | length > 0
+- name: "📊 PHASE 5: Summary Report"
+  ansible.builtin.include_tasks: summary.yml

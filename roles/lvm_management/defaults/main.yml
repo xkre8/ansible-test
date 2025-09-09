@@ -1,43 +1,21 @@
 ---
-# LVM Configuration Defaults
-vg_strategy: "create_new"  # create_new, use_existing, extend_existing
-pv_strategy: "create_new_pv"  # create_new_pv, use_existing_pv
-volume_group_name: ""
-
-# NEW: Partition Strategy
-partition_strategy: "use_whole_disk"  # use_whole_disk, create_partition
-partition_size_gb: 10  # Size in GB for new partition
-
-# Device variables (set by survey)
+# === PRIMARY CONFIGURATION ===
 selected_disk_name: ""
-manual_lvm_device: ""
-existing_pv_device: ""
+partition_strategy: "use_whole_disk"  # use_whole_disk, create_partition
 
+# === PARTITION CONFIGURATION ===
+split_disk: false                     # true/false - split disk into 2 partitions
+partition_size_gb: 10                 # Size for first partition (when split_disk=true)
+
+# === VOLUME GROUP CONFIGURATION ===
+volume_group_name: ""                 # Primary VG name
+volume_group2_name: ""                # Secondary VG name (when split_disk=true)
+
+# === FILESYSTEM CONFIGURATION ===
+filesystem_config: []                 # Primary VG filesystems
+filesystem_config2: []                # Secondary VG filesystems (when split_disk=true)
+
+# === SYSTEM SETTINGS ===
 lvm_debug: true
-# Filesystem configuration (YAML string from survey)
-filesystem_config: []
-
 auto_generate_lv_names: true
-
-
-
-  # - path: /opt/app
-  #   lv_name: ""
-  #   size_mb: 2048
-  #   fstype: xfs
-
-  # - path: /data
-  #   lv_name: "custom_data"
-  #   size_mb: 2048
-  #   fstype: xfs
-
-  # - path: /app
-  #   lv_name: "custom_app"
-  #   size_mb: 2048
-  #   fstype: ext4
-
-  # - path: /bin/logs
-  #   lv_name: "bin/logs"
-  #   size_mb: 2048
-  #   fstype: ext4
-
+force_recreate_partitions: false

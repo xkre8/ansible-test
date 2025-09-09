@@ -1,0 +1,56 @@
+---
+# === VOLUME GROUP CREATION ===
+- name: Display VG creation plan
+  ansible.builtin.debug:
+    msg: |
+      📦 VOLUME GROUP CREATION PLAN:
+      🎯 Primary VG: {{ volume_group_name }} on {{ primary_device }}
+      {% if split_disk %}
+      🎯 Secondary VG: {{ volume_group2_name }} on {{ secondary_device }}
+      {% endif %}
+
+# === CREATE PRIMARY VG ===
+- name: Create primary volume group
+  community.general.lvg:
+    vg: "{{ volume_group_name }}"
+    pvs: "{{ primary_device }}"
+    state: present
+  register: primary_vg_result
+
+- name: Get primary VG information
+  ansible.builtin.command: vgs {{ volume_group_name }} --units m --noheadings -o vg_size,vg_free --nosuffix
+  register: primary_vg_info
+  changed_when: false
+
+# === CREATE SECONDARY VG (if split_disk) ===
+- name: Create secondary volume group
+  community.general.lvg:
+    vg: "{{ volume_group2_name }}"
+    pvs: "{{ secondary_device }}"
+    state: present
+  register: secondary_vg_result
+  when: split_disk
+
+- name: Get secondary VG information
+  ansible.builtin.command: vgs {{ volume_group2_name }} --units m --noheadings -o vg_size,vg_free --nosuffix
+  register: secondary_vg_info
+  changed_when: false
+  when: split_disk
+
+# === DISPLAY VG CREATION RESULTS ===
+- name: Display VG creation results
+  ansible.builtin.debug:
+    msg: |
+      ✅ VOLUME GROUP CREATION COMPLETE:
+      
+      📦 Primary VG: {{ volume_group_name }}
+         Size: {{ primary_vg_info.stdout.split()[0] }}MB
+         Free: {{ primary_vg_info.stdout.split()[1] }}MB
+         Device: {{ primary_device }}
+      
+      {% if split_disk %}
+      📦 Secondary VG: {{ volume_group2_name }}
+         Size: {{ secondary_vg_info.stdout.split()[0] }}MB
+         Free: {{ secondary_vg_info.stdout.split()[1] }}MB
+         Device: {{ secondary_device }}
+      {% endif %}
