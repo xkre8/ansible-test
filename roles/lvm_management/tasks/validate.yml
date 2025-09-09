@@ -68,6 +68,23 @@
     parsed_fs_config: "{{ (filesystem_config | from_yaml) if filesystem_config else [] }}"
     parsed_fs_config2: "{{ (filesystem_config2 | from_yaml) if filesystem_config2 and split_disk and create_secondary_filesystem else [] }}"
 
+- name: Validate primary filesystem configuration
+  ansible.builtin.fail:
+    msg: |
+      Invalid filesystem config in filesystem_config:
+      Item {{ item_index }}: {{ item }}
+      - path, size_mb, fstype are required
+      - size_mb must be positive number
+      - fstype must be: xfs, ext4, ext3, ext2
+  when: 
+    - parsed_fs_config | length > 0
+    - item.path is not defined or item.size_mb is not defined or 
+      item.fstype is not defined or (item.size_mb | int) <= 0 or
+      item.fstype not in ['xfs', 'ext4', 'ext3', 'ext2']
+  loop: "{{ parsed_fs_config }}"
+  loop_control:
+    index_var: item_index
+
 - name: Validate secondary filesystem configuration
   ansible.builtin.fail:
     msg: |
@@ -86,6 +103,13 @@
   loop: "{{ parsed_fs_config2 }}"
   loop_control:
     index_var: item_index
+
+# === CALCULATE SIZES ===
+- name: Calculate total filesystem sizes and remaining disk space
+  ansible.builtin.set_fact:
+    total_fs_size_mb: "{{ parsed_fs_config | map(attribute='size_mb') | map('int') | sum }}"
+    total_fs2_size_mb: "{{ parsed_fs_config2 | map(attribute='size_mb') | map('int') | sum }}"
+    remaining_disk_gb: "{{ (disk_size_gb | int) - (partition_size_gb | int) }}"
 
 - name: Display validation summary (Enhanced)
   ansible.builtin.debug:
