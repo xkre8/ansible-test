@@ -17,7 +17,7 @@
 
 - name: "💾 PHASE 4: Filesystem & LV Creation"
   ansible.builtin.include_tasks: create_fs_lv.yml
-  when: parsed_fs_config | length > 0 or (split_disk and parsed_fs_config2 | length > 0)
+  when: parsed_fs_config | length > 0 or (split_disk and create_secondary_filesystem and parsed_fs_config2 | length > 0)
 
 - name: "📊 PHASE 5: Summary Report"
   ansible.builtin.include_tasks: summary.yml
