@@ -82,19 +82,14 @@
         ""
       {%- endif -%}
 
-- name: Display partition plan
+- name: Display partition results
   ansible.builtin.debug:
     msg: |
-      🔧 PARTITION CREATION PLAN:
-      📀 Target disk: {{ base_disk }}
-      📊 Strategy: {{ 'Split into 2 partitions' if split_disk else 'Use whole disk or single partition' }}
-      
-      {% if partition_strategy == 'create_partition' and split_disk %}
-      📋 Partition 1: 1MiB → {{ partition_size_gb }}GiB (for {{ volume_group_name }})
-      📋 Partition 2: {{ partition_size_gb }}GiB → 100% (for {{ volume_group2_name }})
-      🗂️  Secondary FS: {{ 'Create filesystems' if create_secondary_filesystem else 'VG only (no filesystems)' }}
-      {% elif partition_strategy == 'create_partition' %}
-      📋 Single partition: 1MiB → 100% (for {{ volume_group_name }})
-      {% else %}
-      📋 Use whole disk (no partitioning)
+      ✅ PARTITION CREATION COMPLETE:
+      🎯 Primary device: {{ primary_device }} → {{ volume_group_name }}
+      {% if split_disk %}
+      🎯 Secondary device: {{ secondary_device }} → {{ volume_group2_name }}
       {% endif %}
+      
+      📊 Final layout:
+      {{ ansible_lsblk[selected_disk_name] | default('Device info not available') }}

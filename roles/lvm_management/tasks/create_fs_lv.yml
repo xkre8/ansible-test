@@ -1,7 +1,5 @@
 ---
 # === FILESYSTEM & LV CREATION ===
-
-# === GENERATE LV NAMES FOR PRIMARY VG ===
 - name: Generate LV names for primary VG
   ansible.builtin.set_fact:
     primary_fs_dirs: "{{ enhanced_fs_config }}"
@@ -33,9 +31,7 @@
         {%- set _ = result.append(item | combine({'lv_name': final_lv_name, 'vg_name': volume_group2_name})) -%}
       {%- endfor -%}
       {{ result }}
-  when: 
-    - split_disk
-    - create_secondary_filesystem
+  when: split_disk
 
 # === SIZE VALIDATION ===
 - name: Validate primary VG has enough space
@@ -54,7 +50,6 @@
     fail_msg: "Insufficient space in {{ volume_group2_name }}. Required: {{ total_fs2_size_mb }}MB, Available: {{ secondary_vg_info.stdout.split()[1] }}MB"
   when: 
     - split_disk
-    - create_secondary_filesystem
     - secondary_fs_dirs | length > 0
     - secondary_vg_info is defined
 
@@ -77,7 +72,6 @@
   loop: "{{ secondary_fs_dirs }}"
   when: 
     - split_disk
-    - create_secondary_filesystem
     - secondary_fs_dirs | length > 0
 
 # === CREATE FILESYSTEMS ===
@@ -97,7 +91,6 @@
   loop: "{{ secondary_fs_dirs }}"
   when: 
     - split_disk
-    - create_secondary_filesystem
     - secondary_fs_dirs | length > 0
 
 # === CREATE MOUNT POINTS ===
@@ -117,7 +110,6 @@
   loop: "{{ secondary_fs_dirs }}"
   when: 
     - split_disk
-    - create_secondary_filesystem
     - secondary_fs_dirs | length > 0
 
 # === MOUNT FILESYSTEMS ===
@@ -141,32 +133,4 @@
   loop: "{{ secondary_fs_dirs }}"
   when: 
     - split_disk
-    - create_secondary_filesystem
     - secondary_fs_dirs | length > 0
-
-# === DISPLAY STATUS ===
-- name: Display filesystem creation results
-  ansible.builtin.debug:
-    msg: |
-      💾 FILESYSTEM CREATION RESULTS:
-      
-      📦 Primary VG ({{ volume_group_name }}):
-      {% if primary_fs_dirs is defined and primary_fs_dirs | length > 0 %}
-      {% for fs in primary_fs_dirs %}
-      ✅ {{ fs.path }} ({{ fs.size_mb }}MB, {{ fs.fstype }}) → {{ fs.lv_name }}
-      {% endfor %}
-      {% else %}
-      ⚠️  No filesystems configured
-      {% endif %}
-      
-      {% if split_disk %}
-      📦 Secondary VG ({{ volume_group2_name }}):
-      {% if create_secondary_filesystem and secondary_fs_dirs is defined and secondary_fs_dirs | length > 0 %}
-      {% for fs in secondary_fs_dirs %}
-      ✅ {{ fs.path }} ({{ fs.size_mb }}MB, {{ fs.fstype }}) → {{ fs.lv_name }}
-      {% endfor %}
-      {% else %}
-      🎯 VG created but no filesystems (create_secondary_filesystem: {{ create_secondary_filesystem }})
-      💡 Available space: {{ secondary_vg_info.stdout.split()[1] if secondary_vg_info is defined else 'Unknown' }}MB
-      {% endif %}
-      {% endif %}

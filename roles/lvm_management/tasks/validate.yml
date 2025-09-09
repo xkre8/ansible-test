@@ -66,7 +66,7 @@
 - name: Parse filesystem configurations
   ansible.builtin.set_fact:
     parsed_fs_config: "{{ (filesystem_config | from_yaml) if filesystem_config else [] }}"
-    parsed_fs_config2: "{{ (filesystem_config2 | from_yaml) if filesystem_config2 and split_disk and create_secondary_filesystem else [] }}"
+    parsed_fs_config2: "{{ (filesystem_config2 | from_yaml) if filesystem_config2 and split_disk else [] }}"
 
 - name: Validate primary filesystem configuration
   ansible.builtin.fail:
@@ -95,7 +95,6 @@
       - fstype must be: xfs, ext4, ext3, ext2
   when: 
     - split_disk | bool
-    - create_secondary_filesystem | bool
     - parsed_fs_config2 | length > 0
     - item.path is not defined or item.size_mb is not defined or 
       item.fstype is not defined or (item.size_mb | int) <= 0 or
@@ -111,7 +110,7 @@
     total_fs2_size_mb: "{{ parsed_fs_config2 | map(attribute='size_mb') | map('int') | sum }}"
     remaining_disk_gb: "{{ (disk_size_gb | int) - (partition_size_gb | int) }}"
 
-- name: Display validation summary (Enhanced)
+- name: Display validation summary (Fixed)
   ansible.builtin.debug:
     msg: |
       ✅ VALIDATION SUMMARY:
@@ -122,13 +121,8 @@
       {% if split_disk %}
       📋 Partition 1: {{ partition_size_gb }}GB → VG: {{ volume_group_name }}
       📋 Partition 2: {{ remaining_disk_gb }}GB → VG: {{ volume_group2_name | default('N/A') }}
-      🗂️  Secondary FS: {{ 'YES' if create_secondary_filesystem else 'NO (VG only)' }}
       💾 FS Config 1: {{ parsed_fs_config | length }} filesystems ({{ total_fs_size_mb }}MB)
-      {% if create_secondary_filesystem %}
       💾 FS Config 2: {{ parsed_fs_config2 | length }} filesystems ({{ total_fs2_size_mb }}MB)
-      {% else %}
-      💾 FS Config 2: Skipped (VG only)
-      {% endif %}
       {% else %}
       📋 Single setup: {{ disk_size_gb }}GB → VG: {{ volume_group_name }}
       💾 FS Config: {{ parsed_fs_config | length }} filesystems ({{ total_fs_size_mb }}MB)

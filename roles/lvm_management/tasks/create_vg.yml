@@ -59,5 +59,4 @@
          Size: {{ secondary_vg_info.stdout.split()[0] }}MB
          Free: {{ secondary_vg_info.stdout.split()[1] }}MB
          Device: {{ secondary_device }}
-         Status: {{ 'Ready for filesystems' if create_secondary_filesystem else 'VG only (no filesystems will be created)' }}
       {% endif %}
