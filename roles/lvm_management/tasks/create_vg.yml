@@ -8,7 +8,7 @@
          ✅ Will create: {{ create_primary_vg | default(true) }}
       {% if split_disk %}
       🎯 Secondary VG: {{ volume_group2_name }} on {{ secondary_device }}
-         ✅ Will create: {{ create_secondary_vg | default(false) }}
+         ✅ Will create: {{ create_secondary_vg | default(true) }}
       {% endif %}
 
 # === CREATE PRIMARY VG ===
@@ -35,7 +35,7 @@
   register: secondary_vg_result
   when: 
     - split_disk
-    - create_secondary_vg | default(false)
+    - create_secondary_vg | default(true)
     - secondary_device != ""
     - volume_group2_name != ""
 
@@ -45,7 +45,7 @@
   changed_when: false
   when: 
     - split_disk
-    - create_secondary_vg | default(false)
+    - create_secondary_vg | default(true)
     - secondary_device != ""
     - volume_group2_name != ""
 
@@ -57,20 +57,21 @@
       
       {% if create_primary_vg | default(true) %}
       📦 Primary VG: {{ volume_group_name }}
-         Size: {{ primary_vg_info.stdout.split()[0] }}MB
-         Free: {{ primary_vg_info.stdout.split()[1] }}MB
+         Size: {{ primary_vg_info.stdout.split()[0] if primary_vg_info is defined }}MB
+         Free: {{ primary_vg_info.stdout.split()[1] if primary_vg_info is defined }}MB
          Device: {{ primary_device }}
       {% else %}
-      ❌ Primary VG: {{ volume_group_name }} - SKIPPED (insufficient space)
+      ❌ Primary VG: {{ volume_group_name }} - SKIPPED (insufficient space for required filesystems)
       {% endif %}
       
       {% if split_disk %}
-        {% if create_secondary_vg | default(false) %}
+        {% if create_secondary_vg | default(true) %}
       📦 Secondary VG: {{ volume_group2_name }}
-         Size: {{ secondary_vg_info.stdout.split()[0] }}MB
-         Free: {{ secondary_vg_info.stdout.split()[1] }}MB
+         Size: {{ secondary_vg_info.stdout.split()[0] if secondary_vg_info is defined }}MB
+         Free: {{ secondary_vg_info.stdout.split()[1] if secondary_vg_info is defined }}MB
          Device: {{ secondary_device }}
+         Purpose: {{ 'Filesystems + VG' if split_disk_secondary else 'VG Only (future use)' }}
         {% else %}
-      ❌ Secondary VG: {{ volume_group2_name }} - SKIPPED (insufficient space or no filesystems)
+      ❌ Secondary VG: {{ volume_group2_name }} - SKIPPED (insufficient space for required filesystems)
         {% endif %}
       {% endif %}
