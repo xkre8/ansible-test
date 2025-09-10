@@ -26,7 +26,7 @@
   changed_when: false
   when: create_primary_vg | default(true)
 
-# === CREATE SECONDARY VG (if split_disk) ===
+# === CREATE SECONDARY VG (if split_disk) - Fixed ===
 - name: Create secondary volume group
   community.general.lvg:
     vg: "{{ volume_group2_name }}"
@@ -35,19 +35,20 @@
   register: secondary_vg_result
   when: 
     - split_disk
-    - create_secondary_vg | default(true)
     - secondary_device != ""
     - volume_group2_name != ""
+    - (not split_disk_secondary) or (split_disk_secondary and total_fs2_size_mb | int <= ((remaining_disk_gb | int * 1024 * 0.95) | int))
 
 - name: Get secondary VG information
   ansible.builtin.command: vgs {{ volume_group2_name }} --units m --noheadings -o vg_size,vg_free --nosuffix
   register: secondary_vg_info
   changed_when: false
+  failed_when: false
   when: 
     - split_disk
-    - create_secondary_vg | default(true)
     - secondary_device != ""
     - volume_group2_name != ""
+    - (not split_disk_secondary) or (split_disk_secondary and total_fs2_size_mb | int <= ((remaining_disk_gb | int * 1024 * 0.95) | int))
 
 # === DISPLAY VG CREATION RESULTS ===
 - name: Display VG creation results

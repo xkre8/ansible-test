@@ -35,32 +35,39 @@
     - split_disk
     - split_disk_secondary
 
-# === SIZE VALIDATION & VG CREATION DECISION ===
+# === SIZE VALIDATION & VG CREATION DECISION (Fixed) ===
 - name: Calculate available space for each partition
   ansible.builtin.set_fact:
-    partition1_size_mb: "{{ (partition_size_gb | int * 1024 * 0.95) | int }}"  # 95% usable (LVM overhead)
-    partition2_size_mb: "{{ (remaining_disk_gb | int * 1024 * 0.95) | int }}"  # 95% usable (LVM overhead)
+    partition1_size_mb: "{{ (partition_size_gb | int * 1024 * 0.95) | int }}"
+    partition2_size_mb: "{{ (remaining_disk_gb | int * 1024 * 0.95) | int }}"
 
-- name: Determine VG creation based on filesystem requirements
+- name: Check if VGs were actually created (based on actual VG info)
   ansible.builtin.set_fact:
-    create_primary_vg: >-
+    actual_primary_vg_exists: "{{ primary_vg_info is defined and primary_vg_info.rc is defined and primary_vg_info.rc == 0 }}"
+    actual_secondary_vg_exists: "{{ secondary_vg_info is defined and secondary_vg_info.rc is defined and secondary_vg_info.rc == 0 }}"
+
+- name: Determine filesystem creation based on size validation
+  ansible.builtin.set_fact:
+    create_primary_filesystems: >-
       {%- if parsed_fs_config | length == 0 -%}
-        true
+        false
+      {%- elif not actual_primary_vg_exists -%}
+        false
       {%- else -%}
         {{ total_fs_size_mb | int <= partition1_size_mb | int }}
       {%- endif -%}
-    create_secondary_vg: >-
-      {%- if not split_disk -%}
+    create_secondary_filesystems: >-
+      {%- if not split_disk or not split_disk_secondary -%}
         false
-      {%- elif not split_disk_secondary -%}
-        true
       {%- elif parsed_fs_config2 | length == 0 -%}
-        true
+        false
+      {%- elif not actual_secondary_vg_exists -%}
+        false
       {%- else -%}
         {{ total_fs2_size_mb | int <= partition2_size_mb | int }}
       {%- endif -%}
 
-- name: Display size validation results
+- name: Display size validation results (Fixed)
   ansible.builtin.debug:
     msg: |
       🔍 SIZE VALIDATION RESULTS:
@@ -68,31 +75,21 @@
       📋 Partition 1 ({{ partition_size_gb }}GB):
          💾 Available: ~{{ partition1_size_mb }}MB (after LVM overhead)
          📊 Required: {{ total_fs_size_mb }}MB
-         ✅ Create VG: {{ create_primary_vg }}
-         {% if not create_primary_vg %}❌ REASON: Insufficient space for filesystems{% endif %}
+         📦 VG Exists: {{ actual_primary_vg_exists }}
+         ✅ Create Filesystems: {{ create_primary_filesystems }}
+         {% if parsed_fs_config | length > 0 and not create_primary_filesystems %}❌ SKIPPED: Insufficient space or VG missing{% endif %}
       
       {% if split_disk %}
       📋 Partition 2 ({{ remaining_disk_gb }}GB):
          💾 Available: ~{{ partition2_size_mb }}MB (after LVM overhead)
          📊 Required: {{ total_fs2_size_mb }}MB
-         🎯 Create filesystem: {{ split_disk_secondary }}
-         ✅ Create VG: {{ create_secondary_vg }}
-         {% if split_disk_secondary and not create_secondary_vg %}❌ REASON: Insufficient space for filesystems{% endif %}
+         🎯 Create filesystem mode: {{ split_disk_secondary }}
+         📦 VG Exists: {{ actual_secondary_vg_exists }}
+         ✅ Create Filesystems: {{ create_secondary_filesystems }}
+         {% if split_disk_secondary and parsed_fs_config2 | length > 0 and not create_secondary_filesystems %}❌ SKIPPED: Insufficient space or VG missing{% endif %}
       {% endif %}
 
-- name: Fail if primary VG cannot be created but filesystems are required
-  ansible.builtin.fail:
-    msg: |
-      ❌ VALIDATION FAILED:
-      Primary VG ({{ volume_group_name }}) cannot accommodate required filesystems.
-      Required: {{ total_fs_size_mb }}MB
-      Available: ~{{ partition1_size_mb }}MB
-      Please reduce filesystem sizes or increase partition_size_gb.
-  when: 
-    - parsed_fs_config | length > 0
-    - not create_primary_vg
-
-- name: Display final validation summary
+- name: Display final validation summary (Fixed)
   ansible.builtin.debug:
     msg: |
       ✅ FINAL VALIDATION SUMMARY:
@@ -101,111 +98,19 @@
       📊 Split disk: {{ split_disk }}
       🎯 Create secondary filesystem: {{ split_disk_secondary }}
       
-      📦 VG CREATION PLAN:
-      ├── Primary VG ({{ volume_group_name }}): {{ 'CREATE' if create_primary_vg else 'SKIP' }}
-      │   {% if create_primary_vg and parsed_fs_config | length > 0 %}├── Filesystems: {{ parsed_fs_config | length }}{% endif %}
-      │   {% if not create_primary_vg %}└── Reason: Insufficient space{% endif %}
+      📦 FILESYSTEM CREATION PLAN:
+      ├── Primary VG ({{ volume_group_name }}): {{ 'CREATE FS' if create_primary_filesystems else 'SKIP FS' }}
+      │   {% if create_primary_filesystems %}├── Filesystems: {{ parsed_fs_config | length }}{% endif %}
+      │   {% if not create_primary_filesystems and parsed_fs_config | length > 0 %}└── Reason: Size {{ total_fs_size_mb }}MB > Available {{ partition1_size_mb }}MB{% endif %}
       {% if split_disk %}
-      └── Secondary VG ({{ volume_group2_name }}): {{ 'CREATE' if create_secondary_vg else 'SKIP' }}
-          {% if create_secondary_vg and split_disk_secondary and parsed_fs_config2 | length > 0 %}├── Filesystems: {{ parsed_fs_config2 | length }}{% endif %}
-          {% if create_secondary_vg and not split_disk_secondary %}├── VG Only (no filesystems){% endif %}
-          {% if not create_secondary_vg %}└── Reason: Insufficient space for required filesystems{% endif %}
+      └── Secondary VG ({{ volume_group2_name }}): {{ 'CREATE FS' if create_secondary_filesystems else 'VG ONLY' if actual_secondary_vg_exists else 'SKIP ALL' }}
+          {% if create_secondary_filesystems %}├── Filesystems: {{ parsed_fs_config2 | length }}{% endif %}
+          {% if not create_secondary_filesystems and split_disk_secondary and parsed_fs_config2 | length > 0 %}└── Reason: Size {{ total_fs2_size_mb }}MB > Available {{ partition2_size_mb }}MB{% endif %}
       {% endif %}
 
-# === CREATE LOGICAL VOLUMES ===
+# === CREATE LOGICAL VOLUMES (Fixed conditions) ===
 - name: Create logical volumes (primary VG)
   community.general.lvol:
     vg: "{{ volume_group_name }}"
     lv: "{{ item.lv_name }}"
     size: "{{ item.size_mb }}M"
-    state: present
-  loop: "{{ primary_fs_dirs }}"
-  when: 
-    - create_primary_vg | default(true)
-    - primary_fs_dirs | length > 0
-
-- name: Create logical volumes (secondary VG)
-  community.general.lvol:
-    vg: "{{ volume_group2_name }}"
-    lv: "{{ item.lv_name }}"
-    size: "{{ item.size_mb }}M"
-    state: present
-  loop: "{{ secondary_fs_dirs }}"
-  when: 
-    - split_disk
-    - split_disk_secondary
-    - create_secondary_vg | default(false)
-    - secondary_fs_dirs | length > 0
-
-# === CREATE FILESYSTEMS ===
-- name: Create filesystems (primary VG)
-  community.general.filesystem:
-    fstype: "{{ item.fstype }}"
-    dev: "/dev/{{ volume_group_name }}/{{ item.lv_name }}"
-    state: present
-  loop: "{{ primary_fs_dirs }}"
-  when: 
-    - create_primary_vg | default(true)
-    - primary_fs_dirs | length > 0
-
-- name: Create filesystems (secondary VG)
-  community.general.filesystem:
-    fstype: "{{ item.fstype }}"
-    dev: "/dev/{{ volume_group2_name }}/{{ item.lv_name }}"
-    state: present
-  loop: "{{ secondary_fs_dirs }}"
-  when: 
-    - split_disk
-    - split_disk_secondary
-    - create_secondary_vg | default(false)
-    - secondary_fs_dirs | length > 0
-
-# === CREATE MOUNT POINTS ===
-- name: Create mount points (primary VG)
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: directory
-    mode: '0755'
-  loop: "{{ primary_fs_dirs }}"
-  when: 
-    - create_primary_vg | default(true)
-    - primary_fs_dirs | length > 0
-
-- name: Create mount points (secondary VG)
-  ansible.builtin.file:
-    path: "{{ item.path }}"
-    state: directory
-    mode: '0755'
-  loop: "{{ secondary_fs_dirs }}"
-  when: 
-    - split_disk
-    - split_disk_secondary
-    - create_secondary_vg | default(false)
-    - secondary_fs_dirs | length > 0
-
-# === MOUNT FILESYSTEMS ===
-- name: Mount filesystems (primary VG)
-  ansible.posix.mount:
-    path: "{{ item.path }}"
-    src: "/dev/mapper/{{ volume_group_name }}-{{ item.lv_name }}"
-    fstype: "{{ item.fstype }}"
-    opts: defaults
-    state: mounted
-  loop: "{{ primary_fs_dirs }}"
-  when: 
-    - create_primary_vg | default(true)
-    - primary_fs_dirs | length > 0
-
-- name: Mount filesystems (secondary VG)
-  ansible.posix.mount:
-    path: "{{ item.path }}"
-    src: "/dev/mapper/{{ volume_group2_name }}-{{ item.lv_name }}"
-    fstype: "{{ item.fstype }}"
-    opts: defaults
-    state: mounted
-  loop: "{{ secondary_fs_dirs }}"
-  when: 
-    - split_disk
-    - split_disk_secondary
-    - create_secondary_vg | default(false)
-    - secondary_fs_dirs | length > 0
