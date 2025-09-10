@@ -5,8 +5,10 @@
     msg: |
       📦 VOLUME GROUP CREATION PLAN:
       🎯 Primary VG: {{ volume_group_name }} on {{ primary_device }}
+         ✅ Will create: {{ create_primary_vg | default(true) }}
       {% if split_disk %}
       🎯 Secondary VG: {{ volume_group2_name }} on {{ secondary_device }}
+         ✅ Will create: {{ create_secondary_vg | default(false) }}
       {% endif %}
 
 # === CREATE PRIMARY VG ===
@@ -16,11 +18,13 @@
     pvs: "{{ primary_device }}"
     state: present
   register: primary_vg_result
+  when: create_primary_vg | default(true)
 
 - name: Get primary VG information
   ansible.builtin.command: vgs {{ volume_group_name }} --units m --noheadings -o vg_size,vg_free --nosuffix
   register: primary_vg_info
   changed_when: false
+  when: create_primary_vg | default(true)
 
 # === CREATE SECONDARY VG (if split_disk) ===
 - name: Create secondary volume group
@@ -31,6 +35,7 @@
   register: secondary_vg_result
   when: 
     - split_disk
+    - create_secondary_vg | default(false)
     - secondary_device != ""
     - volume_group2_name != ""
 
@@ -40,6 +45,7 @@
   changed_when: false
   when: 
     - split_disk
+    - create_secondary_vg | default(false)
     - secondary_device != ""
     - volume_group2_name != ""
 
@@ -49,14 +55,22 @@
     msg: |
       ✅ VOLUME GROUP CREATION COMPLETE:
       
+      {% if create_primary_vg | default(true) %}
       📦 Primary VG: {{ volume_group_name }}
          Size: {{ primary_vg_info.stdout.split()[0] }}MB
          Free: {{ primary_vg_info.stdout.split()[1] }}MB
          Device: {{ primary_device }}
+      {% else %}
+      ❌ Primary VG: {{ volume_group_name }} - SKIPPED (insufficient space)
+      {% endif %}
       
       {% if split_disk %}
+        {% if create_secondary_vg | default(false) %}
       📦 Secondary VG: {{ volume_group2_name }}
          Size: {{ secondary_vg_info.stdout.split()[0] }}MB
          Free: {{ secondary_vg_info.stdout.split()[1] }}MB
          Device: {{ secondary_device }}
+        {% else %}
+      ❌ Secondary VG: {{ volume_group2_name }} - SKIPPED (insufficient space or no filesystems)
+        {% endif %}
       {% endif %}
