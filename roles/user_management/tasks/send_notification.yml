@@ -30,36 +30,35 @@
   vars:
     email_body: |
       Dear {{ item.value[0].owner_name }},
-
-      Your user account creation request **{{ item.value[0].sr_number }}** has been successfully completed.
-
+      Your user account creation request SR{{ item.value[0].sr_number }} has been successfully completed.
       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      📋 **Service Request Summary**
+      📋 SERVICE REQUEST SUMMARY
       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      • **SR Number:** {{ item.value[0].sr_number }}
-      • **Requester:** {{ item.value[0].owner_name }}
-      • **Contact:** {{ item.value[0].tel }}
-      • **Email:** {{ item.key }}
-
+      SR Number : {{ item.value[0].sr_number }}
+      Requester : {{ item.value[0].owner_name }}
+      Contact   : {{ item.value[0].tel }}
+      Email     : {{ item.key }}
       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      👥 **User Accounts Created**
+      👥 USER ACCOUNTS CREATED
       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       {% for user in item.value %}
-      • **Username:** {{ user.name }}
-        - Purpose: {{ user.purpose | default('Not specified') }}
-        - Home: {{ user.home_directory | default('/home/' + user.name) }}
-        - Groups: {{ (user.additional_groups | join(', ')) if user.additional_groups is defined else 'N/A' }}
-        - Password: {% if user.random_password %}{{ user.password }} ⚠️ *Please store this securely.*{% else %}As provided{% endif %}
+      Username : {{ user.name }}
+        Purpose : {{ user.purpose | default('Not specified') }}
+        Home    : {{ user.home_directory | default('/home/' + user.name) }}
+        Groups  : {{ (user.additional_groups | join(', ')) if user.additional_groups is defined else 'N/A' }}
+        Password: {% if user.random_password %}{{ user.password }}   ⚠️ Please store this securely.{% else %}As provided{% endif %}
+      {% if not loop.last %}
+
+      {% endif %}
       {% endfor %}
-
       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      ✅ **Status:** Completed Successfully
-
+      ✅ STATUS : Completed Successfully
+      
       Thank you,
-      **IT Automation Team**
+      IT Automation Team
       Company Infrastructure Operations
       ---------------------------------------------------------------------
-      *This is an automated message. Please do not reply to this email.*
+      This is an automated message. Please do not reply to this email.
   loop: "{{ email_groups | dict2items }}"
   when:
     - send_email_notification | bool
