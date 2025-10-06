@@ -1,7 +1,7 @@
 ---
-- name: "Convert user_yml to users list (legacy format)"
-  ansible.builtin.set_fact:
-    users: "{{ (user_yml | from_yaml) if user_yml is defined and user_yml | length > 5 else users }}"
+# - name: "Convert user_yml to users list (legacy format)"
+#   ansible.builtin.set_fact:
+#     users: "{{ (user_yml | from_yaml) if user_yml is defined and user_yml | length > 5 else users }}"
 
 - name: "Convert service_requests_yml to users list (new format)"
   ansible.builtin.set_fact:
