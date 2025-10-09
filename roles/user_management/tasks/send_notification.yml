@@ -1,9 +1,11 @@
 ---
-- name: "Get complete timezone info"
+- name: "Get current Thailand time (ICT)"
   ansible.builtin.set_fact:
+    thailand_datetime: "{{ lookup('pipe', 'TZ=Asia/Bangkok date +\"%-d %B %Y %H:%M:%S\"') }}"
+    thailand_date: "{{ lookup('pipe', 'TZ=Asia/Bangkok date +\"%Y-%m-%d\"') }}"
+    thailand_time: "{{ lookup('pipe', 'TZ=Asia/Bangkok date +\"%H:%M:%S\"') }}"
     thailand_full_time: "{{ lookup('pipe', 'TZ=Asia/Bangkok date +\"%Y-%m-%d %H:%M:%S %Z (UTC%z)\"') }}"
   when: send_email_notification | bool
-
 
 - name: "Group users by email for notification"
   ansible.builtin.set_fact:
