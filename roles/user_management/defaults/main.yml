@@ -32,6 +32,13 @@ smtp_password: "gklmnetwlygresdq"
 email_from: "zero.blank32@gmail.com"
 email_subject_prefix: "[IT Automation] User Account Created"
 
+
+# Timezone settings
+use_thailand_timezone: true
+timezone_name: "Asia/Bangkok"
+timezone_display: "ICT"
+include_buddhist_era: false
+
 # service_requests_yml: |
 #   - sr_number: "SR005"
 #     owner_name: "John Doe"
