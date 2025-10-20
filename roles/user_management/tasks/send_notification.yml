@@ -1,10 +1,12 @@
 ---
-- name: "Get current Thailand time (ICT)"
+- name: "Get current Thailand time (ICT) on localhost"
   ansible.builtin.set_fact:
     thailand_datetime: "{{ lookup('pipe', 'TZ=Asia/Bangkok date +\"%-d %B %Y %H:%M:%S\"') }}"
     thailand_date: "{{ lookup('pipe', 'TZ=Asia/Bangkok date +\"%Y-%m-%d\"') }}"
     thailand_time: "{{ lookup('pipe', 'TZ=Asia/Bangkok date +\"%H:%M:%S\"') }}"
     thailand_full_time: "{{ lookup('pipe', 'TZ=Asia/Bangkok date +\"%Y-%m-%d %H:%M:%S %Z (UTC%z)\"') }}"
+  run_once: true
+  delegate_to: localhost
   when: send_email_notification | bool
 
 - name: "Group users by email for notification"
@@ -12,7 +14,7 @@
     email_groups: >-
       {%- set result = {} -%}
       {%- for user in processed_users | default([]) -%}
-        {%- if user.email != '' -%}
+        {%- if (user.email is defined) and (user.email != '') -%}
           {%- if user.email not in result -%}
             {%- set _ = result.update({user.email: []}) -%}
           {%- endif -%}
@@ -20,9 +22,10 @@
         {%- endif -%}
       {%- endfor -%}
       {{ result }}
-  when: 
+  when:
     - send_email_notification | bool
     - processed_users is defined
+  run_once: true
 
 - name: "Send email notification for each SR"
   community.general.mail:
@@ -82,6 +85,7 @@
     - email_groups | length > 0
   register: mail_result
   delegate_to: localhost
+  run_once: true
 
 - name: "Display notification summary"
   ansible.builtin.debug:
