@@ -1,132 +1,65 @@
 ---
-# === Parse Input Data First ===
-- name: "Parse service_requests_yml if provided"
-  ansible.builtin.set_fact:
-    parsed_service_requests: "{{ service_requests_yml | from_yaml if service_requests_yml is string else service_requests_yml }}"
-  when: 
-    - service_requests_yml is defined
-    - service_requests_yml != ''
+- name: "Debug parsed users"
+  ansible.builtin.debug:
+    var: users
 
-- name: "Extract users from service_requests_yml"
-  ansible.builtin.set_fact:
-    users: "{{ all_users }}"
-  vars:
-    all_users: >-
-      {%- set result = [] -%}
-      {%- for sr in parsed_service_requests | default([]) -%}
-        {%- for user in sr.users | default([]) -%}
-          {%- set _ = result.append(user) -%}
-        {%- endfor -%}
-      {%- endfor -%}
-      {{ result }}
-  when: 
-    - parsed_service_requests is defined
-    - parsed_service_requests | length > 0
-
-- name: "Use user_yml if service_requests_yml not provided"
-  ansible.builtin.set_fact:
-    users: "{{ user_yml | from_yaml if user_yml is string else user_yml }}"
-  when: 
-    - service_requests_yml is not defined or service_requests_yml == ''
-    - user_yml is defined
-    - user_yml != ''
-
-- name: "Validate: users variable is defined"
-  ansible.builtin.assert:
-    that:
-      - users is defined
-      - users | length > 0
-    fail_msg: |
-      ❌ No users found!
-      Please provide either:
-        - service_requests_yml (SR-based format)
-        - user_yml (legacy flat format)
-
-# === Get Existing Groups ===
-- name: Get all existing groups
-  ansible.builtin.getent:
-    database: group
-  register: all_groups_raw
-
-- name: Extract group names
-  ansible.builtin.set_fact:
-    existing_groups: "{{ all_groups_raw.ansible_facts.getent_group.keys() | list }}"
-
-# === Extract Required Groups from Users ===
 - name: "Extract required groups safely"
   ansible.builtin.set_fact:
-    required_groups: "{{ all_required_groups }}"
-  vars:
-    all_required_groups: >-
-      {%- set groups = [] -%}
-      {%- for user in users -%}
-        {%- if user.groupname is defined and user.groupname != '' -%}
-          {%- set _ = groups.append(user.groupname) -%}
-        {%- endif -%}
-        {%- if user.additional_groups is defined -%}
-          {%- for group in user.additional_groups -%}
-            {%- if group != '' -%}
-              {%- set _ = groups.append(group) -%}
-            {%- endif -%}
-          {%- endfor -%}
-        {%- endif -%}
-      {%- endfor -%}
-      {{ groups | unique | list }}
+    gid_groups: "{{ users | selectattr('gid', 'defined') | selectattr('gid') | map(attribute='gid') | select('string') | select() | list }}"
+    groupname_groups: "{{ users | selectattr('groupname', 'defined') | selectattr('groupname') | map(attribute='groupname') | select('string') | select() | list }}"
+    additional_groups_flat: "{{ users | selectattr('additional_groups', 'defined') | map(attribute='additional_groups') | flatten | select('string') | list }}"
 
-- name: "Display required groups"
-  ansible.builtin.debug:
-    msg: |
-      📋 Group Validation:
-      ├─ Total users: {{ users | length }}
-      ├─ Required groups: {{ required_groups | length }}
-      └─ Groups: {{ required_groups | join(', ') }}
-  when: debug_mode | default(false)
-
-# === Check Missing Groups ===
-- name: Check if all required groups exist
+- name: "Combine all required groups"
   ansible.builtin.set_fact:
-    missing_groups: "{{ required_groups | difference(existing_groups) }}"
+    all_required_groups: "{{ (gid_groups + groupname_groups + additional_groups_flat) | unique }}"
 
-- name: "Display missing groups warning"
-  ansible.builtin.debug:
-    msg: |
-      ⚠️  WARNING: Missing groups detected!
-      Missing: {{ missing_groups | join(', ') }}
-      
-      {% if create_missing_groups | default(false) %}
-      ✅ Will create missing groups automatically
-      {% else %}
-      ❌ Set create_missing_groups: true to auto-create
-      {% endif %}
+- name: "Check groups exist"
+  ansible.builtin.command: getent group "{{ item }}"
+  register: group_check
+  failed_when: false
+  changed_when: false
+  loop: "{{ all_required_groups }}"
+  when: all_required_groups | length > 0
+
+- name: "Set missing_groups to empty list by default"
+  ansible.builtin.set_fact:
+    missing_groups: []
+
+- name: "Identify missing groups"
+  ansible.builtin.set_fact:
+    missing_groups: "{{ group_check.results | selectattr('rc', '!=', 0) | map(attribute='item') | list }}"
   when: 
-    - missing_groups | length > 0
+    - group_check is defined
+    - group_check.results is defined
 
-# === Create Missing Groups (if enabled) ===
-- name: Create missing groups
+# *** เงื่อนไขใหม่ ***
+- name: "Create missing groups if enabled"
   ansible.builtin.group:
     name: "{{ item }}"
     state: present
   loop: "{{ missing_groups }}"
   when: 
-    - create_missing_groups | default(false)
+    - create_missing_groups | bool
     - missing_groups | length > 0
 
-# === Fail if groups missing and auto-create disabled ===
-- name: Fail if groups are missing
+- name: "Update missing groups list after creation"
+  ansible.builtin.set_fact:
+    missing_groups: []
+  when: 
+    - create_missing_groups | bool
+    - missing_groups | length > 0
+
+- name: "Fail if missing groups found and auto-creation disabled"
   ansible.builtin.fail:
     msg: |
-      ❌ ERROR: The following groups do not exist:
-      {{ missing_groups | join(', ') }}
+      ❌ MISSING GROUPS DETECTED ❌
+      Required: {{ all_required_groups | join(', ') }}
+      Missing: {{ missing_groups | join(', ') }}
       
-      Solutions:
-      1. Set create_missing_groups: true (recommended)
-      2. Create groups manually before running this role
+      Options:
+      1. Create groups manually: sudo groupadd {{ missing_groups | join(' ') }}
+      2. Enable auto-creation: create_missing_groups=true
   when: 
+    - not (create_missing_groups | bool)
+    - missing_groups is defined
     - missing_groups | length > 0
-    - not create_missing_groups | default(false)
-
-- name: "✅ Group validation passed"
-  ansible.builtin.debug:
-    msg: |
-      ✅ All required groups exist or created successfully
-      Total groups validated: {{ required_groups | length }}
