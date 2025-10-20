@@ -2,6 +2,8 @@
 smtp_host: "smtp.gmail.com"
 smtp_port: 587
 smtp_username: "zero.blank32@gmail.com"
-smtp_password: "gklmnetwlygresdq"   # <-- ควรเก็บด้วย ansible-vault
+smtp_password: "gklmnetwlygresdq"
 email_from: "zero.blank32@gmail.com"
 email_subject_prefix: "[IT Automation] User Account Created"
+
+send_email_notification: true
