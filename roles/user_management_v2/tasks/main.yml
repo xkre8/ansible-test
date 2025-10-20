@@ -13,17 +13,6 @@
       ╚═══════════════════════════════════════════════════════╝
   when: debug_mode | bool
 
-- name: "📦 Install required packages (using command)"
-  ansible.builtin.command:
-    cmd: "yum install -y {{ item }}"
-  loop: "{{ required_packages }}"
-  become: yes
-  register: pkg_install
-  changed_when: "'Nothing to do' not in pkg_install.stdout"
-  failed_when: pkg_install.rc != 0
-  tags: [packages]
-  when: not dry_run | default(false)
-
 - name: "🔍 PHASE 1: Input Validation"
   ansible.builtin.include_tasks: validate.yml
   tags:
