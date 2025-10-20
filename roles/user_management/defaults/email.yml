@@ -1,0 +1,22 @@
+---
+# ============================================
+# EMAIL NOTIFICATION CONFIGURATION
+# ============================================
+
+# === SMTP Settings ===
+smtp_host: "smtp.gmail.com"
+smtp_port: 587
+smtp_use_tls: true
+
+# === Email Metadata ===
+email_from: "{{ smtp_username | default('noreply@company.com') }}"
+email_subject_prefix: "[IT Automation]"
+email_template: "text"  # Options: text, html
+
+# === Credentials (Override in vault) ===
+smtp_username: ""
+smtp_password: ""
+
+# === Email Behavior ===
+email_retry_count: 3
+email_timeout: 30
