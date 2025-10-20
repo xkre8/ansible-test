@@ -1,22 +1,7 @@
----
-# ============================================
-# EMAIL NOTIFICATION CONFIGURATION
-# ============================================
-
-# === SMTP Settings ===
+# เก็บค่าที่เป็นความลับ และค่าเฉพาะ env
 smtp_host: "smtp.gmail.com"
 smtp_port: 587
-smtp_use_tls: true
-
-# === Email Metadata ===
-email_from: "{{ smtp_username | default('noreply@company.com') }}"
-email_subject_prefix: "[IT Automation]"
-email_template: "text"  # Options: text, html
-
-# === Credentials (Override in vault) ===
-smtp_username: ""
-smtp_password: ""
-
-# === Email Behavior ===
-email_retry_count: 3
-email_timeout: 30
+smtp_username: "zero.blank32@gmail.com"
+smtp_password: "gklmnetwlygresdq"   # <-- ควรเก็บด้วย ansible-vault
+email_from: "zero.blank32@gmail.com"
+email_subject_prefix: "[IT Automation] User Account Created"
