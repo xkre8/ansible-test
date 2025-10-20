@@ -9,6 +9,8 @@ uid_max: 9999
 password_length: 12
 home_base_path: "/home"
 
+# แก้ไข user_yml ให้เป็น default ว่าง (เก่า)
+user_yml: ""
 
 # เพิ่ม service_requests_yml (ใหม่)
 service_requests_yml: ""
@@ -16,6 +18,19 @@ service_requests_yml: ""
 create_missing_groups: true
 # true สร้าง
 # false ไม่สร้าง
+
+
+send_email_notification: true
+# email_from: "zero.blank32@gmail.com"
+# email_subject_prefix: "[IT Automation] User Account Created"
+
+# Email settings สำหรับ Gmail
+smtp_host: "smtp.gmail.com"
+smtp_port: 587
+smtp_username: "zero.blank32@gmail.com"
+smtp_password: "gklmnetwlygresdq"
+email_from: "zero.blank32@gmail.com"
+email_subject_prefix: "[IT Automation] User Account Created"
 
 
 # Timezone settings
