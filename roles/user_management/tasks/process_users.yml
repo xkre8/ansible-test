@@ -1,35 +1,62 @@
 ---
-- name: "Convert service_requests_yml to users list (new format)"
+# === Parse Input ===
+- name: "Parse user configs"
   ansible.builtin.set_fact:
-    users: "{{ flattened_users }}"
+    parsed_user_configs: "{{ user_yml | from_yaml if user_yml is string else user_yml }}"
+
+# === Convert service_requests_yml to user format (if provided) ===
+- name: "Transform service_requests_yml"
+  ansible.builtin.set_fact:
+    parsed_user_configs: "{{ flattened_users }}"
   vars:
-    service_requests: "{{ (service_requests_yml | from_yaml) if service_requests_yml is defined and service_requests_yml | length > 5 else [] }}"
+    parsed_srs: "{{ service_requests_yml | from_yaml }}"
     flattened_users: >-
       {%- set result = [] -%}
-      {%- for sr in service_requests -%}
-        {%- for user in sr.users | default([]) -%}
-          {%- set auto_description = sr.sr_number + ' ' + sr.owner_name + ' ' + sr.tel -%}
-          {%- set enhanced_user = user | combine({'auto_description': auto_description, 'sr_info': sr}) -%}
-          {%- set _ = result.append(enhanced_user) -%}
+      {%- for sr in parsed_srs -%}
+        {%- for user in sr.users -%}
+          {%- set u = user | combine({
+            'name': user.username,
+            'email': sr.email,
+            'sr_number': sr.sr_number,
+            'owner_name': sr.owner_name,
+            'tel': sr.tel
+          }) -%}
+          {%- set _ = result.append(u) -%}
         {%- endfor -%}
       {%- endfor -%}
       {{ result }}
-  when: service_requests_yml is defined and service_requests_yml | length > 5
+  when: service_requests_yml is defined and service_requests_yml != ''
 
-
-- name: "Detect OS shell"
+# === Fix empty strings (uid, gid, password) ===
+- name: "Normalize empty values"
   ansible.builtin.set_fact:
-    os_shell: >-
-      {{ '/bin/bash' if ansible_os_family in ['RedHat', 'Debian', 'SUSE'] else 
-         '/bin/ash' if ansible_os_family == 'Alpine' else 
-         '/bin/ksh' if ansible_os_family in ['OpenBSD', 'AIX'] else '/bin/sh' }}
+    normalized_users: >-
+      {%- set result = [] -%}
+      {%- for user in parsed_user_configs -%}
+        {%- set fixed = user | combine({
+          'uid': (user.uid | default('')) if (user.uid | default('') != '') else omit,
+          'gid': (user.gid | default('')) if (user.gid | default('') != '') else omit,
+          'password': (user.password | default('')) if (user.password | default('') != '') else ''
+        }) -%}
+        {%- set _ = result.append(fixed) -%}
+      {%- endfor -%}
+      {{ result }}
 
-- name: "Debug processed users"
-  ansible.builtin.debug:
-    msg:
-      - "OS Family: {{ ansible_os_family }}"
-      - "Default shell: {{ os_shell }}"
-      - "service_requests_yml length: {{ service_requests_yml | length if service_requests_yml is defined else 'undefined' }}"
-      - "user_yml length: {{ user_yml | length if user_yml is defined else 'undefined' }}"
-      - "Total users: {{ users | length }}"
-      - "Users: {{ users | map(attribute='username') | list if users | length > 0 else 'None' }}"
+# === Generate passwords ===
+- name: "Generate passwords for users without password"
+  ansible.builtin.set_fact:
+    processed_users: >-
+      {%- set result = [] -%}
+      {%- for user in normalized_users -%}
+        {%- set needs_pwd = (user.password == '') -%}
+        {%- set random_pwd = lookup('password', '/dev/null length=16 chars=ascii_letters,digits') if needs_pwd else '' -%}
+        {%- set enhanced = user | combine({
+          'password': random_pwd if needs_pwd else user.password,
+          'random_password': needs_pwd,
+          'home': user.home_directory | default('/home/' + user.name),
+          'groups': user.additional_groups | default([]),
+          'group': user.groupname | default('users')
+        }) -%}
+        {%- set _ = result.append(enhanced) -%}
+      {%- endfor -%}
+      {{ result }}

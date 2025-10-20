@@ -1,16 +1,37 @@
 ---
-- name: "Debug and process user_yml"
+- name: "Install required packages"
+  ansible.builtin.package:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ required_packages }}"
+  when: not (dry_run | default(false))
+
+- name: "🔧 Process User Data"
   ansible.builtin.include_tasks: process_users.yml
 
-- name: "Validate groups exist"
+- name: "🔍 Validate Groups"
   ansible.builtin.include_tasks: validate_groups.yml
 
-- name: "Create users"
-  ansible.builtin.include_tasks: create_users.yml
+# 🔥 Dry-run preview
+- name: "🔍 DRY-RUN: Preview users"
+  ansible.builtin.debug:
+    msg: |
+      🔍 Would create {{ processed_users | length }} users:
+      {% for user in processed_users %}
+      {{ loop.index }}. {{ user.name }} ({{ user.group }})
+      {% endfor %}
+  when: dry_run | default(false)
 
-- name: "Display report"
+# 🔥 Create users (skip if dry-run)
+- name: "👤 Create Users"
+  ansible.builtin.include_tasks: create_users.yml
+  when: not (dry_run | default(false))
+
+- name: "📊 Generate Report"
   ansible.builtin.include_tasks: report.yml
 
-- name: "Send email notifications"
+- name: "📧 Send Notification"
   ansible.builtin.include_tasks: send_notification.yml
-  when: send_email_notification | bool
+  when: 
+    - send_email_notification | default(false)
+    - not (dry_run | default(false))
