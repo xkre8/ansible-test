@@ -1,0 +1,115 @@
+---
+# ═══════════════════════════════════════════════════════════
+# INPUT VALIDATION
+# ═══════════════════════════════════════════════════════════
+
+- name: "Load validation rules"
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/defaults/validation.yml"
+  tags: always
+
+- name: "Parse user configs"
+  ansible.builtin.set_fact:
+    parsed_user_configs: "{{ user_configs | from_yaml if user_configs is string else user_configs }}"
+
+- name: "Validate: User configs not empty"
+  ansible.builtin.assert:
+    that:
+      - parsed_user_configs is defined
+      - parsed_user_configs | length > 0
+    fail_msg: "❌ user_configs is empty or undefined"
+    success_msg: "✅ Found {{ parsed_user_configs | length }} user(s) to process"
+
+- name: "Validate: Username format"
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.name | length >= username_min_length
+      - item.name | length <= username_max_length
+      - item.name is regex(username_regex)
+      - item.name not in username_reserved
+    fail_msg: "❌ Invalid username: {{ item.name | default('undefined') }}"
+    success_msg: "✅ Username valid: {{ item.name }}"
+  loop: "{{ parsed_user_configs }}"
+  loop_control:
+    label: "{{ item.name | default('unnamed') }}"
+  when: validate_username_format | bool
+
+- name: "Validate: No duplicate usernames"
+  ansible.builtin.assert:
+    that:
+      - (parsed_user_configs | map(attribute='name') | list | unique | length) == (parsed_user_configs | length)
+    fail_msg: "❌ Duplicate usernames detected"
+    success_msg: "✅ All usernames are unique"
+  when: check_duplicate_usernames | bool
+
+- name: "Validate: UID ranges"
+  ansible.builtin.assert:
+    that:
+      - item.uid is not defined or (item.uid | int >= uid_min and item.uid | int <= uid_max)
+    fail_msg: "❌ UID out of range: {{ item.uid | default('N/A') }}"
+    success_msg: "✅ UID valid: {{ item.uid | default('auto') }}"
+  loop: "{{ parsed_user_configs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.uid is defined
+
+- name: "Validate: Email format"
+  ansible.builtin.assert:
+    that:
+      - item.email is not defined or item.email is regex(email_regex)
+    fail_msg: "❌ Invalid email: {{ item.email | default('N/A') }}"
+    success_msg: "✅ Email valid: {{ item.email | default('N/A') }}"
+  loop: "{{ parsed_user_configs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - validate_email_addresses | bool
+    - item.email is defined
+
+- name: "Get all existing groups"
+  ansible.builtin.getent:
+    database: group
+  register: all_groups_raw
+
+- name: "Extract group names"
+  ansible.builtin.set_fact:
+    existing_groups: "{{ all_groups_raw.ansible_facts.getent_group.keys() | list }}"
+
+- name: "Collect required groups"
+  ansible.builtin.set_fact:
+    required_groups: "{{ parsed_user_configs | map(attribute='groups', default=[]) | flatten | unique | list }}"
+
+- name: "Validate: Groups exist"
+  ansible.builtin.set_fact:
+    missing_groups: "{{ required_groups | difference(existing_groups) }}"
+
+- name: "Display missing groups warning"
+  ansible.builtin.debug:
+    msg: |
+      ⚠️ WARNING: The following groups do not exist:
+      {{ missing_groups | join(', ') }}
+  when:
+    - missing_groups | length > 0
+    - not fail_on_missing_groups
+
+- name: "Fail if groups are missing"
+  ansible.builtin.fail:
+    msg: |
+      ❌ ERROR: The following groups do not exist: {{ missing_groups | join(', ') }}
+      
+      Options:
+      1. Create groups manually
+      2. Set auto_create_missing_groups: true
+      3. Set fail_on_missing_groups: false
+  when:
+    - missing_groups | length > 0
+    - fail_on_missing_groups | bool
+
+- name: "✅ Validation completed successfully"
+  ansible.builtin.debug:
+    msg: |
+      ✅ ALL VALIDATIONS PASSED
+      ├─ Users: {{ parsed_user_configs | length }}
+      ├─ Required groups: {{ required_groups | length }}
+      └─ Missing groups: {{ missing_groups | length }}

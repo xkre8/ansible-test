@@ -1,0 +1,71 @@
+---
+# ═══════════════════════════════════════════════════════════
+# USER CREATION
+# ═══════════════════════════════════════════════════════════
+
+- name: "Display dry-run message"
+  ansible.builtin.debug:
+    msg: |
+      🔍 DRY-RUN MODE: No users will be created
+      
+      Users to be created:
+      {% for user in processed_users %}
+        {{ loop.index }}. {{ user.name }} ({{ user.email | default('no-email') }})
+      {% endfor %}
+  when: dry_run | bool
+
+- name: "Create user accounts"
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    password: "{{ item.password | password_hash('sha512') }}"
+    uid: "{{ item.uid }}"
+    groups: "{{ item.groups }}"
+    home: "{{ item.home_directory }}"
+    shell: "{{ item.shell }}"
+    state: present
+    create_home: "{{ create_home_directory }}"
+  loop: "{{ processed_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: user_creation_result
+  failed_when: false
+  when: not dry_run
+  no_log: true
+
+- name: "Collect creation results"
+  ansible.builtin.set_fact:
+    created_users: "{{ user_creation_result.results | selectattr('changed') | map(attribute='item') | list }}"
+    skipped_users: "{{ user_creation_result.results | rejectattr('changed') | rejectattr('failed', 'defined') | map(attribute='item') | list }}"
+    failed_users: "{{ user_creation_result.results | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='item') | list }}"
+  when:
+    - not dry_run
+    - user_creation_result is defined
+
+- name: "Display creation summary"
+  ansible.builtin.debug:
+    msg: |
+      👤 USER CREATION SUMMARY
+      ├─ Total: {{ processed_users | length }}
+      ├─ Created: {{ created_users | default([]) | length }}
+      ├─ Skipped: {{ skipped_users | default([]) | length }}
+      └─ Failed: {{ failed_users | default([]) | length }}
+  when: not dry_run
+
+- name: "Display failed users"
+  ansible.builtin.debug:
+    msg: |
+      ❌ FAILED USERS:
+      {% for user in failed_users %}
+        - {{ user.name }}
+      {% endfor %}
+  when:
+    - not dry_run
+    - failed_users | default([]) | length > 0
+
+- name: "Fail if any user creation failed"
+  ansible.builtin.fail:
+    msg: "❌ {{ failed_users | length }} user(s) failed to create"
+  when:
+    - not dry_run
+    - failed_users | default([]) | length > 0
+    - not enable_rollback_on_error

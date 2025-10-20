@@ -1,0 +1,41 @@
+---
+# ═══════════════════════════════════════════════════════════
+# AUDIT LOGGING
+# ═══════════════════════════════════════════════════════════
+
+- name: "Create audit log directory"
+  ansible.builtin.file:
+    path: "/var/log/ansible/user_management"
+    state: directory
+    mode: '0755'
+  when: not dry_run
+
+- name: "Log user creation events"
+  ansible.builtin.lineinfile:
+    path: "/var/log/ansible/user_management/audit.log"
+    line: "{{ ansible_date_time.iso8601 }} | {{ ansible_hostname }} | {{ item.name }} | UID:{{ item.uid | default('auto') }} | SR:{{ item.sr_number }} | OPERATOR:{{ ansible_user_id }} | STATUS:{{ 'CREATED' if item.name in (created_users | default([]) | map(attribute='name') | list) else 'SKIPPED' }}"
+    create: yes
+    mode: '0644'
+  loop: "{{ processed_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: not dry_run
+
+- name: "Log failed user creations"
+  ansible.builtin.lineinfile:
+    path: "/var/log/ansible/user_management/audit.log"
+    line: "{{ ansible_date_time.iso8601 }} | {{ ansible_hostname }} | {{ item.name }} | UID:{{ item.uid | default('auto') }} | SR:{{ item.sr_number }} | OPERATOR:{{ ansible_user_id }} | STATUS:FAILED | ERROR:User creation failed"
+    create: yes
+    mode: '0644'
+  loop: "{{ failed_users | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - not dry_run
+    - failed_users is defined
+    - failed_users | length > 0
+
+- name: "Display audit log location"
+  ansible.builtin.debug:
+    msg: "📝 Audit log: /var/log/ansible/user_management/audit.log"
+  when: not dry_run

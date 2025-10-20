@@ -1,0 +1,34 @@
+---
+# ═══════════════════════════════════════════════════════════
+# EMAIL NOTIFICATION SETTINGS
+# ═══════════════════════════════════════════════════════════
+
+# === SMTP CONFIGURATION ===
+smtp_host: "localhost"
+smtp_port: 25
+smtp_username: ""
+smtp_password: ""
+smtp_timeout: 30
+smtp_use_tls: false
+smtp_use_ssl: false
+
+# === EMAIL SETTINGS ===
+email_from: "it-automation@company.com"
+email_reply_to: "noreply@company.com"
+email_cc: []
+email_bcc: []
+email_subject_prefix: "[IT Automation]"
+email_charset: "utf-8"
+
+# === EMAIL TEMPLATE ===
+email_template: "text"  # text, html, cisco_html
+email_brand_name: "IT Automation Team"
+email_brand_org: "Company Infrastructure Operations"
+email_brand_color: "#FFC20E"
+
+# === EMAIL RETRY ===
+email_retry_count: 3
+email_retry_delay: 5
+
+# === EMAIL VALIDATION ===
+validate_email_addresses: true

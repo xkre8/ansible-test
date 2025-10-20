@@ -1,0 +1,48 @@
+---
+# ═══════════════════════════════════════════════════════════
+# ROLLBACK MECHANISM
+# ═══════════════════════════════════════════════════════════
+
+- name: "Display rollback warning"
+  ansible.builtin.debug:
+    msg: |
+      ⚠️ ROLLBACK INITIATED
+      Users to be removed: {{ created_users | default([]) | length }}
+
+- name: "Confirm rollback"
+  ansible.builtin.pause:
+    prompt: "Are you sure you want to rollback? (yes/no)"
+  register: rollback_confirmation
+  when:
+    - not dry_run
+    - ansible_check_mode is not defined
+
+- name: "Execute rollback"
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    state: absent
+    remove: yes
+  loop: "{{ created_users | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - not dry_run
+    - rollback_confirmation is not defined or rollback_confirmation.user_input == 'yes'
+
+- name: "Log rollback event"
+  ansible.builtin.lineinfile:
+    path: "/var/log/ansible/user_management/audit.log"
+    line: "{{ ansible_date_time.iso8601 }} | {{ ansible_hostname }} | {{ item.name }} | UID:{{ item.uid | default('auto') }} | SR:{{ item.sr_number }} | OPERATOR:{{ ansible_user_id }} | STATUS:ROLLED_BACK"
+    create: yes
+  loop: "{{ created_users | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - not dry_run
+    - enable_audit_logging | bool
+
+- name: "Display rollback summary"
+  ansible.builtin.debug:
+    msg: |
+      🔄 ROLLBACK COMPLETED
+      Users removed: {{ created_users | default([]) | length }}

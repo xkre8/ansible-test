@@ -1,0 +1,74 @@
+---
+# ═══════════════════════════════════════════════════════════
+# USER MANAGEMENT V2 - MAIN ORCHESTRATOR
+# ═══════════════════════════════════════════════════════════
+
+- name: "📢 Display role information"
+  ansible.builtin.debug:
+    msg: |
+      ╔═══════════════════════════════════════════════════════╗
+      ║   USER MANAGEMENT V2 - CLEAN CODE EDITION            ║
+      ║   Version: {{ user_management_version }}              ║
+      ║   Mode: {{ 'DRY-RUN' if dry_run else 'PRODUCTION' }} ║
+      ╚═══════════════════════════════════════════════════════╝
+  when: debug_mode | bool
+
+- name: "📦 Install required packages"
+  ansible.builtin.package:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ required_packages }}"
+  when: not dry_run
+
+- name: "🔍 PHASE 1: Input Validation"
+  ansible.builtin.include_tasks: validate.yml
+  tags:
+    - validation
+    - always
+
+- name: "🔧 PHASE 2: Data Transformation"
+  ansible.builtin.include_tasks: transform.yml
+  tags:
+    - transform
+    - always
+
+- name: "👤 PHASE 3: User Creation"
+  block:
+    - name: Create users
+      ansible.builtin.include_tasks: create_users.yml
+  rescue:
+    - name: Handle user creation errors
+      ansible.builtin.debug:
+        msg: "⚠️ User creation encountered errors. Check rollback option."
+    
+    - name: Execute rollback if enabled
+      ansible.builtin.include_tasks: rollback.yml
+      when: enable_rollback_on_error | bool
+  tags:
+    - users
+
+- name: "📊 PHASE 4: Generate Report"
+  ansible.builtin.include_tasks: report.yml
+  tags:
+    - report
+
+- name: "📧 PHASE 5: Send Notifications"
+  ansible.builtin.include_tasks: notify.yml
+  when: enable_email_notification | bool
+  tags:
+    - notification
+
+- name: "📝 PHASE 6: Audit Logging"
+  ansible.builtin.include_tasks: audit.yml
+  when: enable_audit_logging | bool
+  tags:
+    - audit
+
+- name: "✅ Role execution completed"
+  ansible.builtin.debug:
+    msg: |
+      ╔═══════════════════════════════════════════════════════╗
+      ║   ✅ USER MANAGEMENT COMPLETED SUCCESSFULLY          ║
+      ║   Users processed: {{ processed_users | length }}    ║
+      ║   Time: {{ ansible_date_time.iso8601 }}              ║
+      ╚═══════════════════════════════════════════════════════╝

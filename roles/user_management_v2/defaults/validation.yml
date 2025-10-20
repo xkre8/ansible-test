@@ -1,0 +1,55 @@
+---
+# ═══════════════════════════════════════════════════════════
+# VALIDATION RULES
+# ═══════════════════════════════════════════════════════════
+
+# === USERNAME VALIDATION ===
+username_regex: '^[a-z_][a-z0-9_-]{0,31}[$]?$'
+username_min_length: 3
+username_max_length: 32
+username_reserved:
+  - root
+  - admin
+  - administrator
+  - system
+  - daemon
+  - bin
+  - sys
+  - sync
+  - games
+  - man
+  - lp
+  - mail
+  - news
+  - uucp
+  - proxy
+  - www-data
+  - backup
+  - nobody
+
+# === UID VALIDATION ===
+uid_min: 1000
+uid_max: 60000
+uid_reserved_ranges:
+  - start: 0
+    end: 999
+
+# === EMAIL VALIDATION ===
+email_regex: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+# === GROUP VALIDATION ===
+allow_system_groups: false
+system_groups:
+  - root
+  - wheel
+  - sudo
+  - adm
+  - kmem
+  - disk
+  - lp
+  - mem
+  - kmem
+  - cdrom
+  - tape
+  - tty
+  - dip

@@ -1,0 +1,410 @@
+- name: " Set timezone Asia/Bangkok"
+  become: true
+  community.general.timezone:
+    name: Asia/Bangkok
+
+ 
+# === Brand configuration ===
+- name: Set brand defaults
+  ansible.builtin.set_fact:
+    mail_brand_name: "{{ mail_brand_name | default('Automation team') }}"
+    mail_brand_org: "{{ mail_brand_org | default('Krungsri Bank') }}"
+    mail_brand_color: "{{ mail_brand_color | default('#FFC20E') }}"
+    mail_table_border_color: "{{ mail_table_border_color | default('#e0e0e0') }}"
+
+# === Recipients & split decision ===
+- name: Build mail recipients
+  ansible.builtin.set_fact:
+    mail_all_recipients: "{{ [mail_fixed_receiver | default(''), mail_input_receiver | default('')] | reject('equalto','') | list | unique | join(',') }}"
+    both_recipients_present: "{{ (mail_fixed_receiver | default('') | length > 0) and (mail_input_receiver | default('') | length > 0) }}"
+    do_split: "{{ (mail_split_audience | default(false)) and (both_recipients_present | default(false)) }}"
+
+- name: Decide per-recipient sending
+  ansible.builtin.set_fact:
+    send_infra: "{{ (mail_fixed_receiver | default('')) | length > 0 }}"
+    send_user: "{{ (mail_input_receiver | default('')) | length > 0 }}"
+
+# === Normalize inputs ===
+- name: Normalize new_senders (string -> list)
+  ansible.builtin.set_fact:
+    new_senders_norm: "{{ (new_senders | from_yaml) if (new_senders is string) else (new_senders | default([])) }}"
+  when: new_senders_norm is not defined
+
+# === Ensure summary exists (support aggregate or single mode) ===
+- name: Ensure new_senders_summary exists
+  ansible.builtin.set_fact:
+    new_senders_summary: >-
+      {{
+        new_senders_summary
+        | default(
+            new_senders_norm
+            | map('combine', {'status': 'n/a', 'reason': 'not_validated'})
+            | list
+          )
+      }}
+
+- name: Alias mail_items
+  ansible.builtin.set_fact:
+    mail_items: "{{ new_senders_summary }}"
+
+# Defaults to avoid 'undefined' in any path
+- name: Initialize mail counters (defaults)
+  ansible.builtin.set_fact:
+    mail_total: "{{ mail_total | default(0) }}"
+    mail_pass_count: "{{ mail_pass_count | default(0) }}"
+    mail_skip_count: "{{ mail_skip_count | default(0) }}"
+    mail_fail_count: "{{ mail_fail_count | default(0) }}"
+
+# === Stats (robust defaults) ===
+- name: Compute stats
+  ansible.builtin.set_fact:
+    mail_total: "{{ mail_items | length }}"
+    mail_pass_count: "{{ (mail_items | selectattr('status','equalto','add')  | list) | length }}"
+    mail_skip_count: "{{ (mail_items | selectattr('status','equalto','skip') | list) | length }}"
+    mail_fail_count: "{{ (mail_items | selectattr('status','equalto','fail') | list) | length }}"
+    mail_success_count: "{{ mail_pass_count + mail_skip_count }}"  
+    existing_count: "{{ sender_entries | default([]) | length }}"
+    ticket_label: "{{ (include_ticket_in_subject | default(true)) | ternary((ticket_change | default('-')), '-') }}"
+    ticket_protail_safe: "{{ (ticket_protail | default('')) if (ticket_protail | default('') | length > 0) else 'n/a' }}"
+    now_iso: "{{ (ansible_date_time.iso8601) if (ansible_date_time is defined) else '' }}"
+
+
+ 
+
+# === Site/Gateway and support ===
+- name: Determine site and gateways
+  ansible.builtin.set_fact:
+    cisco_site_code: "{{ 'DR' if 'DR' in (cisco_site_name | default('') | upper) else 'DC' }}"
+    gateway_dc_merged: "{{ gateway_dc | default({'host':'mail2.krungsri.com','ip':'192.168.1.21','port':25}) }}"
+    gateway_dr_merged: "{{ gateway_dr | default({'host':'mail8.krungsri.com','ip':'192.168.82.52','port':25}) }}"
+    support_contact_email_safe: "{{ support_contact_email | default('xxxxx@krungsri.com') }}"
+
+# === Reason map (human readable) ===
+- name: Build reason map
+  ansible.builtin.set_fact:
+    reason_map:
+      invalid_ipv4_or_cidr: "Invalid IP/CIDR format"
+      duplicate_in_batch: "Duplicate in your request"
+      exists_exact: "Already exists"
+      covered_by_existing_subnet: "Already covered by existing subnet"
+      would_cover_existing_host: "Would cover an existing host (not allowed)"
+      would_cover_existing_subnet: "Would cover an existing subnet (not allowed)"
+      overlaps_existing_subnet: "Overlaps an existing subnet (not allowed)"
+      would_cover_candidate_entry: "Would cover another entry in your request"
+      overlaps_candidate_subnet: "Overlaps another subnet in your request"
+      subnet_not_allowed: "Subnet not allowed by policy"
+      not_validated: "Not validated"
+
+# === Compute site names used in this run (for grouping USER view) ===
+- name: Compute user_site_names
+  ansible.builtin.set_fact:
+    user_site_names: >-
+      {{
+        (mail_items | map(attribute='site') | list | reject('equalto', none) | list | unique)
+        if (mail_items | length) > 0 else []
+      }}
+
+- name: Ensure user_site_names has fallback
+  ansible.builtin.set_fact:
+    user_site_names: "{{ user_site_names if (user_site_names | length) > 0 else [cisco_site_code] }}"
+
+# === HTML (INFRA) — enhanced with branding ===
+- name: Build HTML (INFRA)
+  ansible.builtin.set_fact:
+    mail_html_infra: |
+      <div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#222;">
+        <div style="padding:16px;">
+
+          <!-- Brand header -->
+          <div style="background: {{ mail_brand_color }}; color:#000; padding:10px 12px; border-radius:10px; margin-bottom:14px; font-weight:600;">
+            {{ mail_brand_name }} · {{ mail_brand_org }}
+          </div>
+
+          <h3 style="margin:0 0 12px 0;">Cisco MailGateway Summary</h3>
+          <table style="border-collapse:collapse;margin:0 0 16px 0;font-size:13px;">
+            <tr><td style="padding:2px 8px;color:#555;">Ticket</td><td><b>{{ ticket_change | default('-') }}</b></td></tr>
+            <tr><td style="padding:2px 8px;color:#555;">Ticket Portal</td><td>{{ ticket_protail_safe }}</td></tr>
+            <tr><td style="padding:2px 8px;color:#555;">Application</td><td><b>{{ application_name | default('-') }}</b></td></tr>
+            <tr><td style="padding:2px 8px;color:#555;">Requester</td><td>{{ requester | default('-') }}</td></tr>
+            <tr><td style="padding:2px 8px;color:#555;">App Owner</td><td>{{ app_owner | default('-') }}</td></tr>
+        <!--    <tr><td style="padding:2px 8px;color:#555;">Existing IP (before)</td><td>{{ existing_count }}</td></tr> -->
+            <tr><td style="padding:2px 8px;color:#555;">Email Sizing per Mail </td><td>{{ email_Sizing }}</td></tr>
+            <tr><td style="padding:2px 8px;color:#555;">Email Volume per Day </td><td>{{ email_Volume }}</td></tr>
+            <tr><td style="padding:2px 8px;color:#555;">New Items</td>
+                <td>Total {{ mail_total }}
+                   | Pass <span style="color:#2e7d32">{{ mail_pass_count }}</span>
+                   | Skip <span style="color:#6d6d6d">{{ mail_skip_count }}</span>
+                   | Fail <span style="color:#c62828">{{ mail_fail_count }}</span>
+                </td></tr>
+            <tr><td style="padding:2px 8px;color:#555;">Generated</td><td>{{ now_iso | default(ansible_date_time.iso8601) }}</td></tr>
+          </table>
+
+          {% set dc_defined = mail_items | selectattr('site','equalto','DC') | list %}
+          {% set dr_defined = mail_items | selectattr('site','equalto','DR') | list %}
+          {% set undef_rows = mail_items | rejectattr('site','defined') | list %}
+          {% set dc_rows = (cisco_site_code == 'DC') and (dc_defined + undef_rows) or dc_defined %}
+          {% set dr_rows = (cisco_site_code == 'DR') and (dr_defined + undef_rows) or dr_defined %}
+
+          <h4 style="margin:16px 0 6px 0;">Server: {{ gateway_dc_merged.host }} </h4>
+          <table cellpadding="6" cellspacing="0" border="1"
+                 style="border-collapse:collapse; border-color:{{ mail_table_border_color }}; width:100%; font-size:12px;">
+            <thead style="background:#fafafa;">
+              <tr>
+                <th align="left">#</th>
+                <th align="left">Sender_name</th>
+                <th align="left">Description</th>
+                <th align="left">Status</th>
+                <th align="left">Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% if dc_rows | length == 0 %}
+              <tr><td colspan="5" style="color:#777;">No items for DC.</td></tr>
+              {% else %}
+              {% for item in dc_rows %}
+              {% set st = item.status | default('') %}
+              {% set is_pass = (st == 'add') %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td><code>{{ item.sender_name | default('') }}</code></td>
+                <td>{{ item.description | default('') }}</td>
+                <td style="color: {{ '#2e7d32' if is_pass else (st=='skip' and '#6d6d6d' or '#c62828') }};">{{ (is_pass and 'PASS') or (st|upper) }}</td>
+                <td>{{ reason_map[item.reason] | default(item.reason | default('')) }}</td>
+              </tr>
+              {% endfor %}
+              {% endif %}
+            </tbody>
+          </table>
+
+          <h4 style="margin:16px 0 6px 0;">Server: {{ gateway_dr_merged.host }}</h4>
+          <table cellpadding="6" cellspacing="0" border="1"
+                 style="border-collapse:collapse; border-color:{{ mail_table_border_color }}; width:100%; font-size:12px;">
+            <thead style="background:#fafafa;">
+              <tr>
+                <th align="left">#</th>
+                <th align="left">Sender_name</th>
+                <th align="left">Description</th>
+                <th align="left">Status</th>
+                <th align="left">Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% if dr_rows | length == 0 %}
+              <tr><td colspan="5" style="color:#777;">No items for DR.</td></tr>
+              {% else %}
+              {% for item in dr_rows %}
+              {% set st = item.status | default('') %}
+              {% set is_pass = (st == 'add') %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td><code>{{ item.sender_name | default('') }}</code></td>
+                <td>{{ item.description | default('') }}</td>
+                <td style="color: {{ '#2e7d32' if is_pass else (st=='skip' and '#6d6d6d' or '#c62828') }};">{{ (is_pass and 'PASS') or (st|upper) }}</td>
+                <td>{{ reason_map[item.reason] | default(item.reason | default('')) }}</td>
+              </tr>
+              {% endfor %}
+              {% endif %}
+            </tbody>
+          </table>
+
+
+
+          {% if mail_items | length > 0 and ('site' in mail_items[0]) %}
+          <h4 style="margin:16px 0 6px 0;">Site Summary</h4>
+          <table cellpadding="6" cellspacing="0" border="1"
+                 style="border-collapse:collapse; border-color:{{ mail_table_border_color }}; width:100%; font-size:12px;">
+            <thead style="background:#fafafa;">
+              <tr><th align="left">Site</th><th align="left">Total</th><th align="left">Pass</th><th align="left">Skip</th><th align="left">Fail</th></tr>
+            </thead>
+            <tbody>
+              {% for s in (mail_items | map(attribute='site') | list | unique) %}
+              {% set rows = mail_items | selectattr('site','equalto',s) | list %}
+              <tr>
+                <td>{{ s }}</td>
+                <td>{{ rows | length }}</td>
+                <td style="color:#2e7d32">{{ (rows | selectattr('status','equalto','add')  | list | length) }}</td>
+                <td style="color:#6d6d6d">{{ (rows | selectattr('status','equalto','skip') | list | length) }}</td>
+                <td style="color:#c62828">{{ (rows | selectattr('status','equalto','fail') | list | length) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% endif %}
+          <div style="padding:12px 0; font-size:13px; font-family:Arial, sans-serif; line-height:1.5;">
+            <hr style="border:none;border-top:2px solid {{ mail_table_border_color }};margin:12px 0;">
+            
+            <p style="margin:0 0 8px 0;">
+              <b>Instruction:</b> After the IP address has been successfully added, please configure the E-Mail Gateway as follows:
+            </p>
+
+            <ul style="margin:0 0 12px 18px; padding:0;">
+              <li><b>Primary Server (DC Site):</b> {{ gateway_dc_merged.host }} (port {{ gateway_dc_merged.port }})</li>
+              <li><b>Secondary Server (DR Site):</b> {{ gateway_dr_merged.host }} (port {{ gateway_dr_merged.port }})</li>
+            </ul>
+
+            <div style="background:#fff8e1; border:1px solid #f0c36d; padding:10px 12px; border-radius:6px; margin:12px 0; font-size:12.5px;">
+              <b style="color:#d35400;">⚠️ Note:</b> Please use the <u>DNS name</u> instead of the IP address.<br>
+              If the DNS name is not available, you may use the following IPs:
+              <ul style="margin:6px 0 0 20px; padding:0;">
+                <li>DC Site: {{ gateway_dc_merged.ip }}</li>
+                <li>DR Site: {{ gateway_dr_merged.ip }}</li>
+              </ul>
+            </div>
+
+            <p style="margin:8px 0 0 0;">
+              If there is any issue, please contact <a href="mailto:{{ support_contact_email_safe }}" style="color:#0066cc; text-decoration:none;">{{ support_contact_email_safe }}</a>
+            </p>
+          </div>
+
+
+
+
+        </div>
+      </div>
+
+
+# === HTML (USER) — enhanced with branding ===
+- name: Build HTML (USER)
+  ansible.builtin.set_fact:
+    mail_html_user: |
+      <div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#222;">
+        <div style="padding:16px;">
+
+          <!-- Brand header -->
+          <div style="background: {{ mail_brand_color }}; color:#000; padding:10px 12px; border-radius:10px; margin-bottom:14px; font-weight:600;">
+            {{ mail_brand_name }} · {{ mail_brand_org }}
+          </div>
+
+          <h3 style="margin:0 0 12px 0;">Cisco MailGateway Summary</h3>
+          <table style="border-collapse:collapse;margin:0 0 12px 0;font-size:13px;">
+            <tr><td style="padding:2px 8px;color:#555;">Ticket</td><td><b>{{ ticket_change | default('-') }}</b></td></tr>
+            <tr><td style="padding:2px 8px;color:#555;">Ticket Portal</td><td>{{ ticket_protail_safe }}</td></tr>
+            <tr><td style="padding:2px 8px;color:#555;">Application</td><td><b>{{ application_name | default('-') }}</b></td></tr>
+            <tr><td style="padding:2px 8px;color:#555;">Requester</td><td>{{ requester | default('-') }}</td></tr>
+            <tr><td style="padding:2px 8px;color:#555;">App Owner</td><td>{{ app_owner | default('-') }}</td></tr>
+            <tr><td style="padding:2px 8px;color:#555;">Email Sizing per Mail  </td><td>{{ email_Sizing }}</td></tr>
+            <tr><td style="padding:2px 8px;color:#555;">Email Volume per Day </td><td>{{ email_Volume }}</td></tr>
+            <tr>
+          <!--     <td style="padding:2px 8px;color:#555;">NEW IP</td> 
+              <td>({{ mail_total }}) | SUCCESS ({{ mail_success_count }})</td> -->
+            </tr>
+          </table>
+
+           <!-- <p style="margin:8px 0;color:#555;">Sites involved: <b>{{ user_site_names | join(', ') }}</b></p> -->
+
+          {% for s in user_site_names %}
+          {% set defined_rows = mail_items | selectattr('site','equalto',s) | list %}
+          {% set undef_rows = (s == cisco_site_code) and (mail_items | rejectattr('site','defined') | list) or [] %}
+          {% set rows = defined_rows + undef_rows %}
+
+          <h4 style="margin:18px 0 6px 0;">Site: {{ s }}</h4>
+
+          <table cellpadding="6" cellspacing="0" border="1"
+                 style="border-collapse:collapse;border-color:{{ mail_table_border_color }};width:100%;font-size:12px;">
+                <thead style="background:#fafafa;">
+                  <tr>
+                    <th align="left">#</th>
+                    <th align="left">Sender_name</th>
+                    <th align="left">Description</th>
+                    <th align="left">Result</th>
+                    <th align="left">Remask</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% if rows | length == 0 %}
+                  <tr><td colspan="5" style="color:#777;">No items for this site.</td></tr>
+                  {% else %}
+                  {% for item in rows %}
+                  {% set st = item.status | default('') %}
+                  {% set is_failed = (st == 'fail') %}  {# treat only 'fail' as FAILED; add/skip => SUCCESS #}
+                  <tr>
+                    <td>{{ loop.index }}</td>
+                    <td><code>{{ item.sender_name | default('') }}</code></td>
+                    <td>{{ item.description | default('') }}</td>
+                    <td>
+                      <span style="display:inline-block;padding:2px 8px;border-radius:10px; font-weight:600;
+                        color:white;background: {{ is_failed and '#c62828' or '#2e7d32' }};">
+                        {{ is_failed and 'FAILED' or 'SUCCESS' }}
+                      </span>
+                    </td>
+                    <td>
+                      {{ is_failed
+                         and (reason_map[item.reason] | default(item.reason | default('')))
+                         or 'n/a' }}
+                    </td>
+                  </tr>
+                  {% endfor %}
+                  {% endif %}
+                </tbody>
+          </table>
+          {% endfor %}
+
+        <div style="padding:12px 0; font-size:13px; font-family:Arial, sans-serif; line-height:1.5;">
+          <hr style="border:none;border-top:2px solid {{ mail_table_border_color }};margin:12px 0;">
+          
+          <p style="margin:0 0 8px 0;">
+            <b>Instruction:</b> After the IP address has been successfully added, please configure the E-Mail Gateway as follows:
+          </p>
+
+          <ul style="margin:0 0 12px 18px; padding:0;">
+            <li><b>Primary Server (DC Site):</b> {{ gateway_dc_merged.host }} (port {{ gateway_dc_merged.port }})</li>
+            <li><b>Secondary Server (DR Site):</b> {{ gateway_dr_merged.host }} (port {{ gateway_dr_merged.port }})</li>
+          </ul>
+
+          <div style="background:#fff8e1; border:1px solid #f0c36d; padding:10px 12px; border-radius:6px; margin:12px 0; font-size:12.5px;">
+            <b style="color:#d35400;">⚠️ Note:</b> Please use the <u>DNS name</u> instead of the IP address.<br>
+            If the DNS name is not available, you may use the following IPs:
+            <ul style="margin:6px 0 0 20px; padding:0;">
+              <li>DC Site: {{ gateway_dc_merged.ip }}</li>
+              <li>DR Site: {{ gateway_dr_merged.ip }}</li>
+            </ul>
+          </div>
+
+          <p style="margin:8px 0 0 0;">
+            If there is any issue, please contact <a href="mailto:{{ support_contact_email_safe }}" style="color:#0066cc; text-decoration:none;">{{ support_contact_email_safe }}</a>
+          </p>
+        </div>
+
+
+
+
+        </div>
+
+
+# === Subjects ===
+- name: Build subjects
+  ansible.builtin.set_fact:
+    mail_subject_infra: >-
+      MailGW Notification · {{ application_name | default('-') }}
+      · Sender Update ({{ (mail_pass_count | default(0)) }}/{{ (mail_total | default(0)) }})
+      · Ticket: {{ ticket_change | default('-') }}
+    mail_subject_user: >-
+      MailGW Notification · {{ application_name | default('-') }}
+      · Sender Update ({{ (mail_success_count | default(0)) }}/{{ (mail_total | default(0)) }})  # add+skip
+      · Ticket: {{ ticket_change | default('-') }}
+
+
+# === Send (no single mode, send separately when receiver exists) ===
+- name: Send summary email (INFRA)
+  when: send_infra
+  community.general.mail:
+    host: "{{ mail_host }}"
+    port: "{{ mail_port }}"
+    sender: "{{ mail_sender }}"
+    to: "{{ mail_fixed_receiver }}"
+    subject: "{{ mail_subject_infra | regex_replace('\\s+',' ') }}"
+    subtype: html
+    body: "{{ mail_html_infra }}"
+  delegate_to: localhost
+
+- name: Send summary email (USER)
+  when: send_user
+  community.general.mail:
+    host: "{{ mail_host }}"
+    port: "{{ mail_port }}"
+    sender: "{{ mail_sender }}"
+    to: "{{ mail_input_receiver }}"
+    subject: "{{ mail_subject_user | regex_replace('\\s+',' ') }}"
+    subtype: html
+    body: "{{ mail_html_user }}"
+  delegate_to: localhost

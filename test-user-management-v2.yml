@@ -1,0 +1,40 @@
+---
+- name: Test User Management V2 - Clean Code Edition
+  hosts: localhost
+  become: yes
+  
+  vars:
+    # Dry-run mode for testing
+    dry_run: true
+    debug_mode: true
+    
+    # User configuration
+    user_configs:
+      - name: "appuser01"
+        groups: ["docker"]
+        email: "admin@company.com"
+        sr_number: "SR2024-TEST-001"
+        owner_name: "Test Admin"
+        tel: "081-234-5678"
+        purpose: "Test application account"
+      
+      - name: "dbuser01"
+        uid: 5001
+        password: "TestPassword123!"
+        groups: ["dba"]
+        email: "dba@company.com"
+        sr_number: "SR2024-TEST-002"
+        owner_name: "DBA Team"
+        tel: "081-234-5679"
+        purpose: "Database administration"
+    
+    # Email settings (dry-run won't send)
+    enable_email_notification: true
+    email_template: "text"
+    
+    # Feature flags
+    enable_audit_logging: true
+    save_report_to_file: false
+
+  roles:
+    - user_management_v2

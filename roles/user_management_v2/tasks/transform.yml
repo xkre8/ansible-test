@@ -1,0 +1,65 @@
+---
+# ═══════════════════════════════════════════════════════════
+# DATA TRANSFORMATION
+# ═══════════════════════════════════════════════════════════
+
+- name: "Generate random passwords for users"
+  ansible.builtin.set_fact:
+    user_passwords: "{{ user_passwords | default({}) | combine({item.name: generated_password}) }}"
+  vars:
+    generated_password: "{{ lookup('password', '/dev/null length=' + (password_length | string) + ' chars=' + password_chars) }}"
+  loop: "{{ parsed_user_configs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - item.password is not defined or item.password == ''
+  no_log: true
+
+- name: "Transform user data"
+  ansible.builtin.set_fact:
+    processed_users: "{{ transformed_users }}"
+  vars:
+    transformed_users: >-
+      {% set result = [] %}
+      {% for user in parsed_user_configs %}
+        {% set enhanced_user = {
+          'name': user.name,
+          'uid': user.uid | default(omit),
+          'password': user.password if user.password is defined and user.password != '' else user_passwords[user.name],
+          'random_password': not (user.password is defined and user.password != ''),
+          'groups': user.groups | default([]),
+          'home_directory': user.home_directory | default(default_home_prefix + '/' + user.name),
+          'shell': user.shell | default(default_shell),
+          'email': user.email | default(''),
+          'sr_number': user.sr_number | default('N/A'),
+          'owner_name': user.owner_name | default('N/A'),
+          'tel': user.tel | default('N/A'),
+          'purpose': user.purpose | default('Not specified')
+        } %}
+        {% set _ = result.append(enhanced_user) %}
+      {% endfor %}
+      {{ result }}
+
+- name: "Display transformation summary"
+  ansible.builtin.debug:
+    msg: |
+      🔧 DATA TRANSFORMATION COMPLETED
+      ├─ Total users: {{ processed_users | length }}
+      ├─ Auto-generated passwords: {{ processed_users | selectattr('random_password') | list | length }}
+      └─ User-provided passwords: {{ processed_users | rejectattr('random_password') | list | length }}
+  when: debug_mode | bool
+
+- name: "Group users by email for notifications"
+  ansible.builtin.set_fact:
+    email_groups: >-
+      {% set result = {} %}
+      {% for user in processed_users %}
+        {% if user.email != '' %}
+          {% if user.email not in result %}
+            {% set _ = result.update({user.email: []}) %}
+          {% endif %}
+          {% set _ = result[user.email].append(user) %}
+        {% endif %}
+      {% endfor %}
+      {{ result }}
+  when: enable_email_notification | bool
